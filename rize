@@ -217,6 +217,18 @@ case "$COMMAND" in
         # Create volume
         docker volume create agent-volume 2>/dev/null || true
 
+        echo -e "${GREEN}✓ rize installed successfully to $HOME/.local/bin/rize${NC}"
+        echo ""
+
+        # Check if image exists, build if not
+        if ! docker image inspect rize:latest > /dev/null 2>&1; then
+            echo -e "${BLUE}Building Docker image...${NC}"
+            "$0" build
+        else
+            echo -e "${GREEN}✓ Docker image already built${NC}"
+            echo ""
+        fi
+
         # Check if ~/.local/bin is in PATH
         if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
             echo -e "${YELLOW}Note: $HOME/.local/bin is not in your PATH${NC}"
@@ -225,7 +237,6 @@ case "$COMMAND" in
             echo ""
         fi
 
-        echo -e "${GREEN}✓ rize installed successfully to $HOME/.local/bin/rize${NC}"
         echo -e "${BLUE}You can now use 'rize' from any directory${NC}"
         echo ""
         echo -e "${YELLOW}Quick start:${NC}"
