@@ -1,0 +1,9 @@
+# Example .mise.toml for a Ruby/Rails project
+# Copy to your project root and rename to .mise.toml
+
+[tools]
+ruby = "3.3.5"
+# Include Node for Rails asset pipeline
+node = "22.0.0"
+# Optional: Include Python for integration with other tools
+# python = "3.12"

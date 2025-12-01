@@ -1,0 +1,216 @@
+#!/bin/bash
+set -e
+
+# Colors for output
+CYAN='\033[0;36m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+RED='\033[0;31m'
+NC='\033[0m' # No Color
+
+# Default versions
+DEFAULT_GO_VERSIONS="1.23.3,1.22.5"
+DEFAULT_RUBY_VERSIONS="3.3,3.2"
+DEFAULT_NODE_VERSIONS="24,22"
+DEFAULT_PYTHON_VERSIONS="3.12,3.11"
+
+# Variables to track what was provided
+GO_VERSIONS=""
+RUBY_VERSIONS=""
+NODE_VERSIONS=""
+PYTHON_VERSIONS=""
+COMMAND=""
+ARGS=()
+
+# Function to show usage
+usage() {
+    cat << EOF
+${CYAN}Dockerize - Multi-Language AI Agent Container${NC}
+
+${YELLOW}Usage:${NC}
+  rize build [OPTIONS]              Build Docker image with specified versions
+  rize shell                        Start interactive shell in container
+  rize run <cmd> [args...]          Run a command in container
+  rize exec <cmd> [args...]         Execute a command in container (alias for run)
+
+${YELLOW}Build Options:${NC}
+  --go=VERSION_LIST                      Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
+  --ruby=VERSION_LIST                    Comma-separated Ruby versions (default: ${DEFAULT_RUBY_VERSIONS})
+  --node=VERSION_LIST                    Comma-separated Node.js versions (default: ${DEFAULT_NODE_VERSIONS})
+  --python=VERSION_LIST                  Comma-separated Python versions (default: ${DEFAULT_PYTHON_VERSIONS})
+
+${YELLOW}Examples:${NC}
+  # Build with default versions
+  rize build
+
+  # Build with custom versions
+  rize build --go=1.23.3,1.22.5 --ruby=3.3,3.2
+
+  # Start interactive shell
+  rize shell
+
+  # Run claude-code on current directory
+  rize run claude-code .
+
+  # Check Go version
+  rize exec go version
+
+${YELLOW}Notes:${NC}
+  - Current directory is mounted to /workspace in container
+  - Commands run with your user ID to avoid permission issues
+  - Tools are lazily installed on first use (faster builds)
+
+EOF
+    exit 0
+}
+
+# Parse command line arguments
+if [[ $# -eq 0 ]]; then
+    usage
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+    build)
+        # Parse build options
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                --go=*)
+                    GO_VERSIONS="${1#--go=}"
+                    shift
+                    ;;
+                --ruby=*)
+                    RUBY_VERSIONS="${1#--ruby=}"
+                    shift
+                    ;;
+                --node=*)
+                    NODE_VERSIONS="${1#--node=}"
+                    shift
+                    ;;
+                --python=*)
+                    PYTHON_VERSIONS="${1#--python=}"
+                    shift
+                    ;;
+                --help|-h)
+                    usage
+                    ;;
+                *)
+                    echo -e "${RED}Unknown option: $1${NC}"
+                    usage
+                    ;;
+            esac
+        done
+
+        # Use defaults if not specified
+        GO_VERSIONS="${GO_VERSIONS:-$DEFAULT_GO_VERSIONS}"
+        RUBY_VERSIONS="${RUBY_VERSIONS:-$DEFAULT_RUBY_VERSIONS}"
+        NODE_VERSIONS="${NODE_VERSIONS:-$DEFAULT_NODE_VERSIONS}"
+        PYTHON_VERSIONS="${PYTHON_VERSIONS:-$DEFAULT_PYTHON_VERSIONS}"
+
+        echo -e "${CYAN}========================================${NC}"
+        echo -e "${CYAN}Building Dockerize Image${NC}"
+        echo -e "${CYAN}========================================${NC}"
+        echo ""
+        echo -e "${BLUE}Versions:${NC}"
+        echo "  Go:     $GO_VERSIONS"
+        echo "  Ruby:   $RUBY_VERSIONS"
+        echo "  Node:   $NODE_VERSIONS"
+        echo "  Python: $PYTHON_VERSIONS"
+        echo ""
+
+        # Get the directory of this script
+        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+        # Check if Dockerfile exists
+        if [[ ! -f "$SCRIPT_DIR/Dockerfile" ]]; then
+            echo -e "${RED}Error: Dockerfile not found in $SCRIPT_DIR${NC}"
+            exit 1
+        fi
+
+        # Build the Docker image with build args
+        docker build \
+            -t rize:latest \
+            --build-arg "GO_VERSIONS=$GO_VERSIONS" \
+            --build-arg "RUBY_VERSIONS=$RUBY_VERSIONS" \
+            --build-arg "NODE_VERSIONS=$NODE_VERSIONS" \
+            --build-arg "PYTHON_VERSIONS=$PYTHON_VERSIONS" \
+            "$SCRIPT_DIR"
+
+        echo ""
+        echo -e "${GREEN}✓ Docker image built successfully!${NC}"
+        echo ""
+        echo -e "${YELLOW}Next steps:${NC}"
+        echo "  # Start interactive shell"
+        echo -e "  ${BLUE}rize shell${NC}"
+        echo ""
+        echo "  # Run a command"
+        echo -e "  ${BLUE}rize run claude-code .${NC}"
+        echo ""
+        echo "  # Check versions"
+        echo -e "  ${BLUE}rize exec go version${NC}"
+        echo ""
+        ;;
+
+    shell)
+        # Check if image exists
+        if ! docker image inspect rize:latest > /dev/null 2>&1; then
+            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
+            "$0" build
+        fi
+
+        echo -e "${BLUE}Starting interactive shell...${NC}"
+
+        # Use -it only if stdin is a TTY (interactive)
+        if [[ -t 0 ]]; then
+            docker run --rm -it \
+                -v "$(pwd):/workspace" \
+                -v "$HOME/.claude:/home/agent/.claude" \
+                rize:latest
+        else
+            docker run --rm \
+                -v "$(pwd):/workspace" \
+                -v "$HOME/.claude:/home/agent/.claude" \
+                rize:latest
+        fi
+        ;;
+
+    run|exec)
+        # Check if image exists
+        if ! docker image inspect rize:latest > /dev/null 2>&1; then
+            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
+            "$0" build
+        fi
+
+        if [[ $# -eq 0 ]]; then
+            echo -e "${RED}Error: run/exec requires a command${NC}"
+            usage
+        fi
+
+        echo -e "${BLUE}Running: $@${NC}"
+
+        # Use -it only if stdin is a TTY (interactive)
+        if [[ -t 0 ]]; then
+            docker run --rm -it \
+                -v "$(pwd):/workspace" \
+                -v "$HOME/.claude:/home/agent/.claude" \
+                rize:latest "$@"
+        else
+            docker run --rm \
+                -v "$(pwd):/workspace" \
+                -v "$HOME/.claude:/home/agent/.claude" \
+                rize:latest "$@"
+        fi
+        ;;
+
+    --help|-h)
+        usage
+        ;;
+
+    *)
+        echo -e "${RED}Unknown command: $COMMAND${NC}"
+        usage
+        ;;
+esac

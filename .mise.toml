@@ -1,0 +1,20 @@
+# Example .mise.toml configuration for the AI Agent container
+# Copy this to your project root and customize the versions as needed
+
+[tools]
+# Go version - default: 1.23.3
+go = "1.23.3"
+
+# Ruby version - default: 3.3.5
+ruby = "3.3.5"
+
+# Node.js version - default: 24.9
+node = "24.9"
+
+# Python version - default: 3.12
+python = "3.12"
+
+# Uncomment below to add more tools managed by mise
+# terraform = "1.6.0"
+# rust = "1.73.0"
+# java = "21.0.1"
