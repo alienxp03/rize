@@ -1,9 +1,0 @@
-# Example .mise.toml for a Go-focused project
-# Copy to your project root and rename to .mise.toml
-
-[tools]
-go = "1.23.3"
-# Include Python for scripts/automation
-python = "3.12"
-# Optional: Include Node for build tooling
-# node = "22.0.0"
