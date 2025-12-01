@@ -22,7 +22,7 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/main/rize -o ~/.loca
 ## Commands
 
 - Build with defaults: `rize build`
-- Custom versions: `rize build --go=1.23.3,1.22.5 --node=24,22 --ruby=3.1.7`
+- Custom versions: `rize build --go=1.23.3,1.22.5 --ruby=3.1.7 --python=3.13.0 --node=24,22`
 - Interactive shell: `rize shell`
 - Run command: `rize run <cmd>` (alias `rize exec`)
 - Run Claude Code: `rize claude <args>`
@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/main/rize -o ~/.loca
 
 ## What's Inside (high level)
 
-- Languages via mise: Go, Node, Ruby (configurable versions preinstalled)
+- Languages via mise: Go, Node, Ruby, Python (configurable versions preinstalled)
 - Package mgrs/linters: npm + pnpm + yarn, golangci-lint, dlv, bundler, rubocop
 - CLIs: git/git-lfs, gh, glab, sqlite3, psql, mysql client, redis-tools
 - Editors/inspectors: vim/nano/less, bat, fzf, ripgrep, fd, jq/yq, tree

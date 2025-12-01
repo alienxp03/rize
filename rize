@@ -16,7 +16,8 @@ FROM ubuntu:24.04
 # Build-time arguments for multiple versions (comma-separated)
 ARG GO_VERSIONS=1.23.3,1.22.5
 ARG NODE_VERSIONS=24,22
-ARG RUBY_VERSIONS=3.1.7
+ARG RUBY_VERSIONS=3.1.7,3.4.7
+ARG PYTHON_VERSIONS=3.13.0
 ARG NODE_DEFAULT=24
 ARG CLAUDE_CODE_VERSION=latest
 ARG CODEX_VERSION=latest
@@ -148,8 +149,23 @@ BREWRC
 # Initialize mise
 RUN mise --version
 
-# Set global defaults and pre-install all requested Go/Ruby/Node versions (default Node is NODE_DEFAULT)
-RUN /bin/bash -c 'set -euo pipefail; cd /home/agent; GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1); RUBY_DEFAULT=$(echo "$RUBY_VERSIONS" | cut -d, -f1); NODE_DEFAULT="${NODE_DEFAULT}"; echo "Setting global defaults: go ${GO_DEFAULT}, ruby ${RUBY_DEFAULT}, node ${NODE_DEFAULT}"; mise use -g go@"$GO_DEFAULT" ruby@"$RUBY_DEFAULT" node@"$NODE_DEFAULT"; IFS="," read -ra GO_LIST <<< "$GO_VERSIONS"; echo "Pre-installing Go versions: ${GO_LIST[*]}"; for v in "${GO_LIST[@]}"; do mise install go@"$v"; done; IFS="," read -ra RUBY_LIST <<< "$RUBY_VERSIONS"; echo "Pre-installing Ruby versions: ${RUBY_LIST[*]}"; for v in "${RUBY_LIST[@]}"; do mise install ruby@"$v"; done; echo "Pre-installing default Node version: ${NODE_DEFAULT}"; mise install node@"$NODE_DEFAULT"; IFS="," read -ra NODE_LIST <<< "$NODE_VERSIONS"; echo "Pre-installing Node versions: ${NODE_LIST[*]}"; for v in "${NODE_LIST[@]}"; do mise install node@"$v"; done'
+# Set global defaults for Ruby
+RUN /bin/bash -c 'cd /home/agent; RUBY_DEFAULT=$(echo "$RUBY_VERSIONS" | cut -d, -f1); echo "Setting Ruby default: ${RUBY_DEFAULT}"; mise use -g ruby@"$RUBY_DEFAULT"'
+
+# Pre-install all requested Ruby versions (done separately to avoid timeout)
+RUN /bin/bash -c 'IFS="," read -ra RUBY_LIST <<< "$RUBY_VERSIONS"; echo "Pre-installing Ruby versions: ${RUBY_LIST[*]}"; for v in "${RUBY_LIST[@]}"; do mise install ruby@"$v"; done'
+
+# Set global default for Python and pre-install versions
+RUN /bin/bash -c 'cd /home/agent; PYTHON_DEFAULT=$(echo "$PYTHON_VERSIONS" | cut -d, -f1); echo "Setting Python default: ${PYTHON_DEFAULT}"; mise use -g python@"$PYTHON_DEFAULT"'
+
+# Pre-install all requested Python versions (done separately to avoid timeout)
+RUN /bin/bash -c 'IFS="," read -ra PYTHON_LIST <<< "$PYTHON_VERSIONS"; echo "Pre-installing Python versions: ${PYTHON_LIST[*]}"; for v in "${PYTHON_LIST[@]}"; do mise install python@"$v"; done'
+
+# Set global default for Go and pre-install versions
+RUN /bin/bash -c 'cd /home/agent; GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1); echo "Setting Go default: ${GO_DEFAULT}"; mise use -g go@"$GO_DEFAULT"; IFS="," read -ra GO_LIST <<< "$GO_VERSIONS"; echo "Pre-installing Go versions: ${GO_LIST[*]}"; for v in "${GO_LIST[@]}"; do mise install go@"$v"; done'
+
+# Set global default for Node and pre-install versions
+RUN /bin/bash -c 'cd /home/agent; NODE_DEFAULT="${NODE_DEFAULT}"; echo "Setting Node default: ${NODE_DEFAULT}"; mise use -g node@"$NODE_DEFAULT"; echo "Pre-installing default Node version: ${NODE_DEFAULT}"; mise install node@"$NODE_DEFAULT"; IFS="," read -ra NODE_LIST <<< "$NODE_VERSIONS"; echo "Pre-installing Node versions: ${NODE_LIST[*]}"; for v in "${NODE_LIST[@]}"; do mise install node@"$v"; done'
 
 # Install Claude Code and Codex using the default Node version
 RUN NODE_DEFAULT="${NODE_DEFAULT}" && \
@@ -189,7 +205,8 @@ DOCKERFILE_EOF
 
 # Default versions
 DEFAULT_GO_VERSIONS="1.23.3,1.22.5"
-DEFAULT_RUBY_VERSIONS="3.1.7"
+DEFAULT_RUBY_VERSIONS="3.1.7,3.4.7"
+DEFAULT_PYTHON_VERSIONS="3.13.0"
 DEFAULT_NODE_VERSIONS="24,22"
 DEFAULT_NODE_DEFAULT="24"
 DEFAULT_CLAUDE_CODE_VERSION="latest"
@@ -198,6 +215,7 @@ DEFAULT_CODEX_VERSION="latest"
 # Variables to track what was provided
 GO_VERSIONS=""
 RUBY_VERSIONS=""
+PYTHON_VERSIONS=""
 NODE_VERSIONS=""
 NODE_DEFAULT=""
 CLAUDE_CODE_VERSION=""
@@ -339,6 +357,7 @@ ${YELLOW}Usage:${NC}
 ${YELLOW}Build Options:${NC}
   --go=VERSION_LIST                 Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
   --ruby=VERSION_LIST               Comma-separated Ruby versions (default: ${DEFAULT_RUBY_VERSIONS})
+  --python=VERSION_LIST             Comma-separated Python versions (default: ${DEFAULT_PYTHON_VERSIONS})
   --node=VERSION_LIST               Comma-separated Node.js versions (default: ${DEFAULT_NODE_VERSIONS})
   --node-default=VERSION            Default Node.js version used for global tools (default: ${DEFAULT_NODE_DEFAULT})
   --claude-code=VERSION             Claude Code npm version (default: ${DEFAULT_CLAUDE_CODE_VERSION})
@@ -352,7 +371,7 @@ ${YELLOW}Examples:${NC}
   rize build
 
   # Build with custom versions
-  rize build --go=1.23.3,1.22.5 --ruby=3.1.7 --node=24,22 --node-default=24 --claude-code=latest --codex=latest
+  rize build --go=1.23.3,1.22.5 --ruby=3.1.7 --python=3.13.0 --node=24,22 --node-default=24 --claude-code=latest --codex=latest
 
   # Start interactive shell
   rize shell
@@ -459,6 +478,10 @@ case "$COMMAND" in
                     RUBY_VERSIONS="${1#--ruby=}"
                     shift
                     ;;
+                --python=*)
+                    PYTHON_VERSIONS="${1#--python=}"
+                    shift
+                    ;;
                 --node=*)
                     NODE_VERSIONS="${1#--node=}"
                     shift
@@ -488,6 +511,7 @@ case "$COMMAND" in
         # Use defaults if not specified
         GO_VERSIONS="${GO_VERSIONS:-$DEFAULT_GO_VERSIONS}"
         RUBY_VERSIONS="${RUBY_VERSIONS:-$DEFAULT_RUBY_VERSIONS}"
+        PYTHON_VERSIONS="${PYTHON_VERSIONS:-$DEFAULT_PYTHON_VERSIONS}"
         NODE_VERSIONS="${NODE_VERSIONS:-$DEFAULT_NODE_VERSIONS}"
         NODE_DEFAULT="${NODE_DEFAULT:-$DEFAULT_NODE_DEFAULT}"
         CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-$DEFAULT_CLAUDE_CODE_VERSION}"
@@ -498,12 +522,13 @@ case "$COMMAND" in
         echo -e "${CYAN}========================================${NC}"
         echo ""
         echo -e "${BLUE}Versions:${NC}"
-        echo "  Go:     $GO_VERSIONS"
-        echo "  Ruby:   $RUBY_VERSIONS"
-        echo "  Node:   $NODE_VERSIONS"
+        echo "  Go:       $GO_VERSIONS"
+        echo "  Ruby:     $RUBY_VERSIONS"
+        echo "  Python:   $PYTHON_VERSIONS"
+        echo "  Node:     $NODE_VERSIONS"
         echo "  Node default: $NODE_DEFAULT"
-        echo "  Claude: $CLAUDE_CODE_VERSION"
-        echo "  Codex:  $CODEX_VERSION"
+        echo "  Claude:   $CLAUDE_CODE_VERSION"
+        echo "  Codex:    $CODEX_VERSION"
         echo ""
 
         # Create temporary directory for Dockerfile
@@ -518,6 +543,7 @@ case "$COMMAND" in
             -t rize:latest \
             --build-arg "GO_VERSIONS=$GO_VERSIONS" \
             --build-arg "RUBY_VERSIONS=$RUBY_VERSIONS" \
+            --build-arg "PYTHON_VERSIONS=$PYTHON_VERSIONS" \
             --build-arg "NODE_VERSIONS=$NODE_VERSIONS" \
             --build-arg "NODE_DEFAULT=$NODE_DEFAULT" \
             --build-arg "CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION" \
