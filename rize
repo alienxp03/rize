@@ -147,7 +147,7 @@ usage() {
 ${CYAN}Rize - Multi-Language AI Agent Container${NC}
 
 ${YELLOW}Usage:${NC}
-  rize install                      Install rize globally to /usr/local/bin
+  rize install                      Install rize globally to ~/.local/bin
   rize build [OPTIONS]              Build Docker image with specified versions
   rize shell                        Start interactive shell in container
   rize run <cmd> [args...]          Run a command in container
@@ -161,7 +161,7 @@ ${YELLOW}Build Options:${NC}
 
 ${YELLOW}Examples:${NC}
   # Install globally
-  sudo rize install
+  rize install
 
   # Build with default versions
   rize build
@@ -197,9 +197,12 @@ shift
 
 case "$COMMAND" in
     install)
+        # Create ~/.local/bin if it doesn't exist
+        mkdir -p "$HOME/.local/bin"
+
         # Check if already installed
-        if [[ -f /usr/local/bin/rize ]] && [[ ! "$FORCE_INSTALL" == "true" ]]; then
-            echo -e "${YELLOW}rize is already installed at /usr/local/bin/rize${NC}"
+        if [[ -f "$HOME/.local/bin/rize" ]] && [[ ! "$FORCE_INSTALL" == "true" ]]; then
+            echo -e "${YELLOW}rize is already installed at $HOME/.local/bin/rize${NC}"
             read -p "Overwrite? (y/N): " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -207,21 +210,22 @@ case "$COMMAND" in
             fi
         fi
 
-        # Check write permissions
-        if [[ ! -w /usr/local/bin ]]; then
-            echo -e "${RED}Error: Cannot write to /usr/local/bin${NC}"
-            echo -e "${YELLOW}Try: sudo $0 install${NC}"
-            exit 1
-        fi
-
         # Copy script
-        cp "$0" /usr/local/bin/rize
-        chmod +x /usr/local/bin/rize
+        cp "$0" "$HOME/.local/bin/rize"
+        chmod +x "$HOME/.local/bin/rize"
 
         # Create volume
         docker volume create agent-volume 2>/dev/null || true
 
-        echo -e "${GREEN}✓ rize installed successfully to /usr/local/bin/rize${NC}"
+        # Check if ~/.local/bin is in PATH
+        if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+            echo -e "${YELLOW}Note: $HOME/.local/bin is not in your PATH${NC}"
+            echo -e "${BLUE}Add this to your shell config (~/.bashrc, ~/.zshrc, etc.):${NC}"
+            echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+            echo ""
+        fi
+
+        echo -e "${GREEN}✓ rize installed successfully to $HOME/.local/bin/rize${NC}"
         echo -e "${BLUE}You can now use 'rize' from any directory${NC}"
         echo ""
         echo -e "${YELLOW}Quick start:${NC}"
