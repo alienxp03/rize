@@ -150,6 +150,7 @@ ${YELLOW}Usage:${NC}
   rize install                      Install rize globally to ~/.local/bin
   rize build [OPTIONS]              Build Docker image with specified versions
   rize shell                        Start interactive shell in container
+  rize claude [args...]             Run claude code in container
   rize run <cmd> [args...]          Run a command in container
   rize exec <cmd> [args...]         Execute a command in container (alias for run)
 
@@ -173,7 +174,7 @@ ${YELLOW}Examples:${NC}
   rize shell
 
   # Run claude code on current directory
-  rize run claude .
+  rize claude .
 
   # Check Go version
   rize exec go version
@@ -348,6 +349,31 @@ case "$COMMAND" in
                 -v "agent-volume:/home/agent/.claude" \
                 -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
                 rize:latest
+        fi
+        ;;
+
+    claude)
+        # Check if image exists
+        if ! docker image inspect rize:latest > /dev/null 2>&1; then
+            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
+            "$0" build
+        fi
+
+        ensure_volume
+
+        # Use -it only if stdin is a TTY (interactive)
+        if [[ -t 0 ]]; then
+            docker run --rm -it \
+                -v "$(pwd):/home/agent/workspace" \
+                -v "agent-volume:/home/agent/.claude" \
+                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+                rize:latest claude "$@"
+        else
+            docker run --rm \
+                -v "$(pwd):/home/agent/workspace" \
+                -v "agent-volume:/home/agent/.claude" \
+                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+                rize:latest claude "$@"
         fi
         ;;
 
