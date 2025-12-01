@@ -11,7 +11,8 @@ ARG CLAUDE_CODE_VERSION=latest
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/home/agent/.local/bin:/home/agent/.local/share/mise/shims:$PATH" \
     HOME=/home/agent \
-    USER=agent
+    USER=agent \
+    IS_SANDBOX=1
 
 # Set the default editor and visual
 ENV EDITOR=vim

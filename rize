@@ -9,6 +9,116 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Embedded Dockerfile content
+DOCKERFILE_CONTENT=$(cat <<'DOCKERFILE_EOF'
+FROM ubuntu:24.04
+
+# Build-time arguments for multiple versions (comma-separated)
+ARG GO_VERSIONS=1.23.3,1.22.5
+ARG RUBY_VERSIONS=3.3,3.2
+ARG NODE_VERSIONS=24,22
+ARG PYTHON_VERSIONS=3.12,3.11
+ARG CLAUDE_CODE_VERSION=latest
+
+# Non-interactive setup
+ENV DEBIAN_FRONTEND=noninteractive \
+    PATH="/home/agent/.local/bin:/home/agent/.local/share/mise/shims:$PATH" \
+    HOME=/home/agent \
+    USER=agent \
+    IS_SANDBOX=1
+
+# Set the default editor and visual
+ENV EDITOR=vim
+
+# Install system dependencies
+RUN apt-get update --allow-insecure-repositories --allow-unauthenticated && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    curl \
+    wget \
+    ca-certificates \
+    bash \
+    zsh \
+    ripgrep \
+    fd-find \
+    bat \
+    jq \
+    unzip \
+    fzf \
+    && ln -s /usr/bin/fdfind /usr/local/bin/fd \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user with home directory and make it world-writable
+RUN useradd -m -s /bin/bash agent && \
+    chmod 777 /home/agent && \
+    mkdir -p /home/agent/.local && \
+    chmod 777 /home/agent/.local
+
+# Install zsh with powerline10k theme (from Claude Code's devcontainer)
+ARG ZSH_IN_DOCKER_VERSION=1.2.0
+RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
+  -p git \
+  -x
+
+# Make zsh the default shell for agent user
+RUN chsh -s /bin/zsh agent
+
+# Add fzf configuration to zshrc if fzf is available
+RUN if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then \
+      echo "# FZF configuration" >> /home/agent/.zshrc && \
+      echo "source /usr/share/doc/fzf/examples/key-bindings.zsh" >> /home/agent/.zshrc && \
+      echo "source /usr/share/doc/fzf/examples/completion.zsh" >> /home/agent/.zshrc; \
+    fi
+
+# Install mise using official installer
+RUN curl https://mise.run | sh && \
+    mv ~/.local/bin/mise /usr/local/bin/mise
+
+# Create workspace directory (as root, before switching user)
+RUN mkdir -p /workspace && chmod 777 /workspace
+
+# Create entrypoint script that initializes mise and handles commands
+RUN printf '#!/bin/bash\nset -e\ncd /home/agent\n\n# Ensure tools are installed (runs once if needed)\nmise install 2>/dev/null || true\n\n# Activate mise to set up PATH with all tools\neval "$(mise activate bash 2>/dev/null || true)"\n\n# Add npm bin directory to PATH for global packages\nNPM_BIN=$(mise exec node -- npm config get prefix 2>/dev/null)/bin\nif [ -d "$NPM_BIN" ]; then\n  export PATH="$NPM_BIN:$PATH"\nfi\n\nif [ $# -eq 0 ]; then\n    # Interactive shell - use zsh with powerline10k\n    exec /bin/zsh -l\nelse\n    # Execute command with tools available\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Switch to agent user for mise setup
+USER agent
+
+# Initialize mise
+RUN mise --version
+
+# Create .mise.toml with just the default versions (first one from each list)
+# This avoids validation warnings about missing secondary versions
+RUN /bin/bash -c 'GO_VERSIONS="${GO_VERSIONS}" && NODE_VERSIONS="${NODE_VERSIONS}" && GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1) && NODE_DEFAULT=$(echo "$NODE_VERSIONS" | cut -d, -f1) && printf "[tools]\ngo = \"%s\"\nnode = \"%s\"\n" "$GO_DEFAULT" "$NODE_DEFAULT" > /home/agent/.mise.toml'
+
+# Trust .mise.toml and pre-install default tools
+RUN cd /home/agent && \
+    mise trust /home/agent/.mise.toml && \
+    GO_VERSION=$(echo "$GO_VERSIONS" | cut -d, -f1) && \
+    NODE_VERSION=$(echo "$NODE_VERSIONS" | cut -d, -f1) && \
+    echo "Pre-installing Go $GO_VERSION and Node $NODE_VERSION..." && \
+    mise install go@$GO_VERSION && \
+    mise install node@$NODE_VERSION
+
+# Install Claude Code using mise exec
+RUN cd /home/agent && \
+    mise exec node@24 -- npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+# Create .claude directory for config persistence
+RUN mkdir -p /home/agent/.claude && \
+    chown -R agent:agent /home/agent/.claude && \
+    chmod 755 /home/agent/.claude
+
+# Set working directory
+WORKDIR /workspace
+
+# Use exec form entrypoint with bash
+ENTRYPOINT ["/bin/bash", "/usr/local/bin/docker-entrypoint.sh"]
+CMD []
+DOCKERFILE_EOF
+)
+
 # Default versions
 DEFAULT_GO_VERSIONS="1.23.3,1.22.5"
 DEFAULT_RUBY_VERSIONS="3.3,3.2"
@@ -23,24 +133,36 @@ PYTHON_VERSIONS=""
 COMMAND=""
 ARGS=()
 
+# Function to ensure docker volume exists
+ensure_volume() {
+    if ! docker volume inspect agent-volume >/dev/null 2>&1; then
+        echo -e "${BLUE}Creating agent-volume for persistent config...${NC}"
+        docker volume create agent-volume
+    fi
+}
+
 # Function to show usage
 usage() {
     cat << EOF
-${CYAN}Dockerize - Multi-Language AI Agent Container${NC}
+${CYAN}Rize - Multi-Language AI Agent Container${NC}
 
 ${YELLOW}Usage:${NC}
+  rize install                      Install rize globally to /usr/local/bin
   rize build [OPTIONS]              Build Docker image with specified versions
   rize shell                        Start interactive shell in container
   rize run <cmd> [args...]          Run a command in container
   rize exec <cmd> [args...]         Execute a command in container (alias for run)
 
 ${YELLOW}Build Options:${NC}
-  --go=VERSION_LIST                      Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
-  --ruby=VERSION_LIST                    Comma-separated Ruby versions (default: ${DEFAULT_RUBY_VERSIONS})
-  --node=VERSION_LIST                    Comma-separated Node.js versions (default: ${DEFAULT_NODE_VERSIONS})
-  --python=VERSION_LIST                  Comma-separated Python versions (default: ${DEFAULT_PYTHON_VERSIONS})
+  --go=VERSION_LIST                 Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
+  --ruby=VERSION_LIST               Comma-separated Ruby versions (default: ${DEFAULT_RUBY_VERSIONS})
+  --node=VERSION_LIST               Comma-separated Node.js versions (default: ${DEFAULT_NODE_VERSIONS})
+  --python=VERSION_LIST             Comma-separated Python versions (default: ${DEFAULT_PYTHON_VERSIONS})
 
 ${YELLOW}Examples:${NC}
+  # Install globally
+  sudo rize install
+
   # Build with default versions
   rize build
 
@@ -50,16 +172,16 @@ ${YELLOW}Examples:${NC}
   # Start interactive shell
   rize shell
 
-  # Run claude-code on current directory
-  rize run claude-code .
+  # Run claude code on current directory
+  rize run claude .
 
   # Check Go version
   rize exec go version
 
 ${YELLOW}Notes:${NC}
   - Current directory is mounted to /workspace in container
-  - Commands run with your user ID to avoid permission issues
-  - Tools are lazily installed on first use (faster builds)
+  - Claude config persists in agent-volume across runs
+  - Commands run with full mise environment
 
 EOF
     exit 0
@@ -74,6 +196,41 @@ COMMAND="$1"
 shift
 
 case "$COMMAND" in
+    install)
+        # Check if already installed
+        if [[ -f /usr/local/bin/rize ]] && [[ ! "$FORCE_INSTALL" == "true" ]]; then
+            echo -e "${YELLOW}rize is already installed at /usr/local/bin/rize${NC}"
+            read -p "Overwrite? (y/N): " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit 0
+            fi
+        fi
+
+        # Check write permissions
+        if [[ ! -w /usr/local/bin ]]; then
+            echo -e "${RED}Error: Cannot write to /usr/local/bin${NC}"
+            echo -e "${YELLOW}Try: sudo $0 install${NC}"
+            exit 1
+        fi
+
+        # Copy script
+        cp "$0" /usr/local/bin/rize
+        chmod +x /usr/local/bin/rize
+
+        # Create volume
+        docker volume create agent-volume 2>/dev/null || true
+
+        echo -e "${GREEN}✓ rize installed successfully to /usr/local/bin/rize${NC}"
+        echo -e "${BLUE}You can now use 'rize' from any directory${NC}"
+        echo ""
+        echo -e "${YELLOW}Quick start:${NC}"
+        echo "  cd ~/your-project"
+        echo "  rize shell              # Interactive shell"
+        echo "  rize exec go version    # Run commands"
+        echo ""
+        ;;
+
     build)
         # Parse build options
         while [[ $# -gt 0 ]]; do
@@ -111,7 +268,7 @@ case "$COMMAND" in
         PYTHON_VERSIONS="${PYTHON_VERSIONS:-$DEFAULT_PYTHON_VERSIONS}"
 
         echo -e "${CYAN}========================================${NC}"
-        echo -e "${CYAN}Building Dockerize Image${NC}"
+        echo -e "${CYAN}Building Rize Image${NC}"
         echo -e "${CYAN}========================================${NC}"
         echo ""
         echo -e "${BLUE}Versions:${NC}"
@@ -121,14 +278,12 @@ case "$COMMAND" in
         echo "  Python: $PYTHON_VERSIONS"
         echo ""
 
-        # Get the directory of this script
-        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+        # Create temporary directory for Dockerfile
+        TEMP_DIR=$(mktemp -d)
+        trap "rm -rf $TEMP_DIR" EXIT
 
-        # Check if Dockerfile exists
-        if [[ ! -f "$SCRIPT_DIR/Dockerfile" ]]; then
-            echo -e "${RED}Error: Dockerfile not found in $SCRIPT_DIR${NC}"
-            exit 1
-        fi
+        # Write Dockerfile to temp directory
+        echo "$DOCKERFILE_CONTENT" > "$TEMP_DIR/Dockerfile"
 
         # Build the Docker image with build args
         docker build \
@@ -137,7 +292,7 @@ case "$COMMAND" in
             --build-arg "RUBY_VERSIONS=$RUBY_VERSIONS" \
             --build-arg "NODE_VERSIONS=$NODE_VERSIONS" \
             --build-arg "PYTHON_VERSIONS=$PYTHON_VERSIONS" \
-            "$SCRIPT_DIR"
+            "$TEMP_DIR"
 
         echo ""
         echo -e "${GREEN}✓ Docker image built successfully!${NC}"
@@ -147,7 +302,7 @@ case "$COMMAND" in
         echo -e "  ${BLUE}rize shell${NC}"
         echo ""
         echo "  # Run a command"
-        echo -e "  ${BLUE}rize run claude-code .${NC}"
+        echo -e "  ${BLUE}rize run claude .${NC}"
         echo ""
         echo "  # Check versions"
         echo -e "  ${BLUE}rize exec go version${NC}"
@@ -163,16 +318,20 @@ case "$COMMAND" in
 
         echo -e "${BLUE}Starting interactive shell...${NC}"
 
+        ensure_volume
+
         # Use -it only if stdin is a TTY (interactive)
         if [[ -t 0 ]]; then
             docker run --rm -it \
                 -v "$(pwd):/workspace" \
-                -v "$HOME/.claude:/home/agent/.claude" \
+                -v "agent-volume:/home/agent/.claude" \
+                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
                 rize:latest
         else
             docker run --rm \
                 -v "$(pwd):/workspace" \
-                -v "$HOME/.claude:/home/agent/.claude" \
+                -v "agent-volume:/home/agent/.claude" \
+                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
                 rize:latest
         fi
         ;;
@@ -191,16 +350,20 @@ case "$COMMAND" in
 
         echo -e "${BLUE}Running: $@${NC}"
 
+        ensure_volume
+
         # Use -it only if stdin is a TTY (interactive)
         if [[ -t 0 ]]; then
             docker run --rm -it \
                 -v "$(pwd):/workspace" \
-                -v "$HOME/.claude:/home/agent/.claude" \
+                -v "agent-volume:/home/agent/.claude" \
+                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
                 rize:latest "$@"
         else
             docker run --rm \
                 -v "$(pwd):/workspace" \
-                -v "$HOME/.claude:/home/agent/.claude" \
+                -v "agent-volume:/home/agent/.claude" \
+                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
                 rize:latest "$@"
         fi
         ;;
