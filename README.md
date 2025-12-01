@@ -27,6 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/main/rize -o ~/.loca
 - Run command: `rize run <cmd>` (alias `rize exec`)
 - Run Claude Code: `rize claude <args>`
 - Extra mounts: `rize shell --path /abs/host/dir[:name]` (mounted at `/home/agent/mounts/<name>`)
+- Clean up Docker: `rize clean` (removes dangling images, build cache, and unused volumes)
 
 ## What's Inside (high level)
 
@@ -42,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/main/rize -o ~/.loca
 ```bash
 rm -f ~/.local/bin/rize
 docker image rm rize:latest 2>/dev/null || true
-docker volume rm agent-volume 2>/dev/null || true
+docker volume rm agent-data 2>/dev/null || true
 ```
 
 ## Notes

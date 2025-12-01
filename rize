@@ -87,9 +87,12 @@ RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 # Create non-root user with home directory and make it world-writable
 RUN useradd -m -s /bin/bash agent && \
-    chmod 777 /home/agent && \
-    mkdir -p /home/agent/.local && \
-    chmod 777 /home/agent/.local
+    chmod 777 /home/agent
+
+# Create .local directory for persistent storage (config, cache, etc.) - do this early before other tools create subdirectories
+RUN mkdir -p /home/agent/.local && \
+    chown -R agent:agent /home/agent/.local && \
+    chmod 755 /home/agent/.local
 
 # Install zsh with powerline10k theme (from Claude Code's devcontainer)
 ARG ZSH_IN_DOCKER_VERSION=1.2.0
@@ -175,11 +178,6 @@ RUN pipx ensurepath && \
     pipx install uv && \
     pipx install yq || true
 
-# Create .claude directory for config persistence
-RUN mkdir -p /home/agent/.claude && \
-    chown -R agent:agent /home/agent/.claude && \
-    chmod 755 /home/agent/.claude
-
 # Set working directory
 WORKDIR /home/agent/workspace
 
@@ -209,9 +207,9 @@ ARGS=()
 
 # Function to ensure docker volume exists
 ensure_volume() {
-    if ! docker volume inspect agent-volume >/dev/null 2>&1; then
-        echo -e "${BLUE}Creating agent-volume for persistent config...${NC}"
-        docker volume create agent-volume
+    if ! docker volume inspect agent-data >/dev/null 2>&1; then
+        echo -e "${BLUE}Creating agent-data volume for persistent storage...${NC}"
+        docker volume create agent-data >/dev/null 2>&1
     fi
 }
 
@@ -228,6 +226,29 @@ get_tty_flag() {
 reset_mount_state() {
     EXTRA_MOUNT_FLAGS=()
     USED_MOUNT_NAMES=()
+}
+
+# Build common docker run flags
+# Usage: DOCKER_FLAGS=$(build_docker_run_flags [config_dir])
+build_docker_run_flags() {
+    local config_dir="${1:-/home/agent/.claude-config}"
+    local flags=()
+
+    flags+=(
+        -v "$(pwd):/home/agent/workspace"
+        -v "agent-data:/home/agent/.local"
+        -e "CLAUDE_CONFIG_DIR=$config_dir"
+    )
+
+    # Add CLAUDE.md mount if it exists
+    if [[ -f "$HOME/.claude/CLAUDE.md" ]]; then
+        flags+=(-v "$HOME/.claude/CLAUDE.md:$config_dir/CLAUDE.md")
+    fi
+
+    # Add extra mounts
+    flags+=("${EXTRA_MOUNT_FLAGS[@]}")
+
+    printf '%s\n' "${flags[@]}"
 }
 
 # Generate a unique mount name to avoid collisions (e.g., repo, repo-2, repo-3)
@@ -313,6 +334,7 @@ ${YELLOW}Usage:${NC}
   rize claude [args...]             Run claude code in container
   rize run <cmd> [args...]          Run a command in container
   rize exec <cmd> [args...]         Execute a command in container (alias for run)
+  rize clean                        Clean up Docker system (images, cache, volumes)
 
 ${YELLOW}Build Options:${NC}
   --go=VERSION_LIST                 Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
@@ -394,7 +416,7 @@ case "$COMMAND" in
         chmod +x "$HOME/.local/bin/rize"
 
         # Create volume
-        docker volume create agent-volume 2>/dev/null || true
+        docker volume create agent-data 2>/dev/null || true
 
         echo -e "${GREEN}✓ rize installed successfully to $HOME/.local/bin/rize${NC}"
         echo ""
@@ -533,13 +555,7 @@ case "$COMMAND" in
 
         TTY_FLAG=$(get_tty_flag)
 
-        docker run --rm $TTY_FLAG \
-            -v "$(pwd):/home/agent/workspace" \
-            -v "agent-volume:/home/agent/.claude" \
-            -v "agent-volume:/home/agent/.cache/gitstatus" \
-            "${EXTRA_MOUNT_FLAGS[@]}" \
-            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest
+        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest
         ;;
 
     claude)
@@ -556,13 +572,7 @@ case "$COMMAND" in
 
         TTY_FLAG=$(get_tty_flag)
 
-        docker run --rm $TTY_FLAG \
-            -v "$(pwd):/home/agent/workspace" \
-            -v "agent-volume:/home/agent/.claude" \
-            -v "agent-volume:/home/agent/.cache/gitstatus" \
-            "${EXTRA_MOUNT_FLAGS[@]}" \
-            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest claude --dangerously-skip-permissions "$@"
+        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest claude --dangerously-skip-permissions "$@"
         ;;
 
     codex)
@@ -579,13 +589,7 @@ case "$COMMAND" in
 
         TTY_FLAG=$(get_tty_flag)
 
-        docker run --rm $TTY_FLAG \
-            -v "$(pwd):/home/agent/workspace" \
-            -v "agent-volume:/home/agent/.claude" \
-            -v "agent-volume:/home/agent/.cache/gitstatus" \
-            "${EXTRA_MOUNT_FLAGS[@]}" \
-            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest codex --dangerously-bypass-approvals-and-sandbox "$@"
+        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest codex --dangerously-bypass-approvals-and-sandbox "$@"
         ;;
     opencode)
         # Check if image exists
@@ -601,13 +605,7 @@ case "$COMMAND" in
 
         TTY_FLAG=$(get_tty_flag)
 
-        docker run --rm $TTY_FLAG \
-            -v "$(pwd):/home/agent/workspace" \
-            -v "agent-volume:/home/agent/.claude" \
-            -v "agent-volume:/home/agent/.cache/gitstatus" \
-            "${EXTRA_MOUNT_FLAGS[@]}" \
-            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest opencode "$@"
+        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest opencode "$@"
         ;;
 
     run|exec)
@@ -631,13 +629,30 @@ case "$COMMAND" in
 
         TTY_FLAG=$(get_tty_flag)
 
-        docker run --rm $TTY_FLAG \
-            -v "$(pwd):/home/agent/workspace" \
-            -v "agent-volume:/home/agent/.claude" \
-            -v "agent-volume:/home/agent/.cache/gitstatus" \
-            "${EXTRA_MOUNT_FLAGS[@]}" \
-            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest "$@"
+        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest "$@"
+        ;;
+
+    clean)
+        echo -e "${BLUE}Cleaning up Docker system...${NC}"
+        echo ""
+
+        echo -e "${BLUE}Removing dangling images...${NC}"
+        docker image prune -f >/dev/null 2>&1
+
+        echo -e "${BLUE}Pruning build cache...${NC}"
+        docker buildx prune -af >/dev/null 2>&1
+
+        echo -e "${BLUE}Cleaning up stopped containers...${NC}"
+        docker container prune -f >/dev/null 2>&1
+
+        echo -e "${BLUE}Removing unused volumes...${NC}"
+        docker volume prune -f >/dev/null 2>&1
+
+        echo ""
+        echo -e "${BLUE}Docker system usage:${NC}"
+        docker system df
+        echo ""
+        echo -e "${GREEN}✓ Cleanup complete!${NC}"
         ;;
 
     --help|-h)
