@@ -16,26 +16,34 @@ FROM ubuntu:24.04
 # Build-time arguments for multiple versions (comma-separated)
 ARG GO_VERSIONS=1.23.3,1.22.5
 ARG NODE_VERSIONS=24,22
+ARG RUBY_VERSIONS=3.1.7
 ARG NODE_DEFAULT=24
 ARG CLAUDE_CODE_VERSION=latest
 ARG CODEX_VERSION=latest
 
 # Non-interactive setup
 ENV DEBIAN_FRONTEND=noninteractive \
-    PATH="/home/agent/.local/bin:/home/agent/.local/share/mise/shims:$PATH" \
+    PATH="/home/agent/.linuxbrew/bin:/home/agent/.linuxbrew/sbin:/home/agent/.local/bin:/home/agent/.local/go/bin:/home/agent/.local/share/mise/shims:$PATH" \
     HOME=/home/agent \
     USER=agent \
-    IS_SANDBOX=1
-
-# Set the default editor and visual
-ENV EDITOR=vim
+    IS_SANDBOX=1 \
+    SHELL=/bin/zsh \
+    EDITOR=vim \
+    LANG=en_US.UTF-8 \
+    LC_ALL=en_US.UTF-8
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    vim \
+    nano \
+    less \
     build-essential \
     git \
+    git-lfs \
     curl \
     wget \
+    httpie \
+    locales \
     ca-certificates \
     bash \
     zsh \
@@ -45,9 +53,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     unzip \
     fzf \
+    yq \
+    tree \
+    dnsutils \
+    gh \
+    glab \
+    sqlite3 \
+    postgresql-client \
+    redis-tools \
+    mysql-client \
+    zip \
+    tar \
+    rsync \
+    htop \
+    lsof \
+    file \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-virtualenv \
+    pipx \
+    cargo \
+    libssl-dev \
+    zlib1g-dev \
+    libreadline-dev \
+    libyaml-dev \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Generate UTF-8 locale
+RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
 # Create non-root user with home directory and make it world-writable
 RUN useradd -m -s /bin/bash agent && \
@@ -71,6 +107,9 @@ RUN if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then \
       echo "source /usr/share/doc/fzf/examples/completion.zsh" >> /home/agent/.zshrc; \
     fi
 
+# Ensure agent owns its home (needed before switching users)
+RUN chown -R agent:agent /home/agent
+
 # Install mise using official installer
 RUN curl https://mise.run | sh && \
     mv ~/.local/bin/mise /usr/local/bin/mise
@@ -85,17 +124,56 @@ RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\ncd /home/agent/wo
 # Switch to agent user for mise setup
 USER agent
 
+# Install Homebrew as agent (non-interactive, user prefix)
+RUN mkdir -p /home/agent/.linuxbrew && \
+    git clone https://github.com/Homebrew/brew /home/agent/.linuxbrew/Homebrew && \
+    mkdir -p /home/agent/.linuxbrew/bin && \
+    ln -s ../Homebrew/bin/brew /home/agent/.linuxbrew/bin/brew && \
+    eval "$(/home/agent/.linuxbrew/bin/brew shellenv)" && \
+    brew update --force --quiet && \
+    cat <<'BREWRC' >> ~/.zshrc
+test -d ~/.linuxbrew && eval "$(~/.linuxbrew/bin/brew shellenv)"
+test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+eval "$($(brew --prefix)/bin/brew shellenv)"
+BREWRC
+RUN cat <<'BREWRC' >> ~/.bashrc
+test -d ~/.linuxbrew && eval "$(~/.linuxbrew/bin/brew shellenv)"
+test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+eval "$($(brew --prefix)/bin/brew shellenv)"
+BREWRC
+
 # Initialize mise
 RUN mise --version
 
-# Set global defaults and pre-install all requested Go/Node versions (default Node is NODE_DEFAULT)
-RUN /bin/bash -c 'set -euo pipefail; cd /home/agent; GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1); NODE_DEFAULT="${NODE_DEFAULT}"; echo "Setting global defaults: go ${GO_DEFAULT}, node ${NODE_DEFAULT}"; mise use -g go@"$GO_DEFAULT" node@"$NODE_DEFAULT"; IFS="," read -ra GO_LIST <<< "$GO_VERSIONS"; echo "Pre-installing Go versions: ${GO_LIST[*]}"; for v in "${GO_LIST[@]}"; do mise install go@"$v"; done; echo "Pre-installing default Node version: ${NODE_DEFAULT}"; mise install node@"$NODE_DEFAULT"; IFS="," read -ra NODE_LIST <<< "$NODE_VERSIONS"; echo "Pre-installing Node versions: ${NODE_LIST[*]}"; for v in "${NODE_LIST[@]}"; do mise install node@"$v"; done'
+# Set global defaults and pre-install all requested Go/Ruby/Node versions (default Node is NODE_DEFAULT)
+RUN /bin/bash -c 'set -euo pipefail; cd /home/agent; GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1); RUBY_DEFAULT=$(echo "$RUBY_VERSIONS" | cut -d, -f1); NODE_DEFAULT="${NODE_DEFAULT}"; echo "Setting global defaults: go ${GO_DEFAULT}, ruby ${RUBY_DEFAULT}, node ${NODE_DEFAULT}"; mise use -g go@"$GO_DEFAULT" ruby@"$RUBY_DEFAULT" node@"$NODE_DEFAULT"; IFS="," read -ra GO_LIST <<< "$GO_VERSIONS"; echo "Pre-installing Go versions: ${GO_LIST[*]}"; for v in "${GO_LIST[@]}"; do mise install go@"$v"; done; IFS="," read -ra RUBY_LIST <<< "$RUBY_VERSIONS"; echo "Pre-installing Ruby versions: ${RUBY_LIST[*]}"; for v in "${RUBY_LIST[@]}"; do mise install ruby@"$v"; done; echo "Pre-installing default Node version: ${NODE_DEFAULT}"; mise install node@"$NODE_DEFAULT"; IFS="," read -ra NODE_LIST <<< "$NODE_VERSIONS"; echo "Pre-installing Node versions: ${NODE_LIST[*]}"; for v in "${NODE_LIST[@]}"; do mise install node@"$v"; done'
 
 # Install Claude Code and Codex using the default Node version
 RUN NODE_DEFAULT="${NODE_DEFAULT}" && \
     cd /home/agent && \
-    mise exec node@$NODE_DEFAULT -- npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} && \
-    mise exec node@$NODE_DEFAULT -- npm install -g @openai/codex@${CODEX_VERSION}
+    mise exec node@$NODE_DEFAULT -- npm install -g \
+      @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+      @openai/codex@${CODEX_VERSION} \
+      opencode-ai \
+      pnpm \
+      yarn \
+      eslint \
+      prettier
+
+# Install Go tools (user bin to avoid permission issues)
+RUN GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1) && \
+    mkdir -p /home/agent/.local/go/bin && \
+    GOBIN=/home/agent/.local/go/bin mise exec go@$GO_DEFAULT -- go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
+    GOBIN=/home/agent/.local/go/bin mise exec go@$GO_DEFAULT -- go install github.com/go-delve/delve/cmd/dlv@latest
+
+# Install Ruby tools
+RUN RUBY_DEFAULT=$(echo "$RUBY_VERSIONS" | cut -d, -f1) && \
+    mise exec ruby@$RUBY_DEFAULT -- gem install --no-document bundler rubocop
+
+# Install Python tools via pipx
+RUN pipx ensurepath && \
+    pipx install uv && \
+    pipx install yq || true
 
 # Create .claude directory for config persistence
 RUN mkdir -p /home/agent/.claude && \
@@ -113,6 +191,7 @@ DOCKERFILE_EOF
 
 # Default versions
 DEFAULT_GO_VERSIONS="1.23.3,1.22.5"
+DEFAULT_RUBY_VERSIONS="3.1.7"
 DEFAULT_NODE_VERSIONS="24,22"
 DEFAULT_NODE_DEFAULT="24"
 DEFAULT_CLAUDE_CODE_VERSION="latest"
@@ -120,6 +199,7 @@ DEFAULT_CODEX_VERSION="latest"
 
 # Variables to track what was provided
 GO_VERSIONS=""
+RUBY_VERSIONS=""
 NODE_VERSIONS=""
 NODE_DEFAULT=""
 CLAUDE_CODE_VERSION=""
@@ -144,13 +224,90 @@ get_tty_flag() {
     fi
 }
 
+# Reset extra mount tracking
+reset_mount_state() {
+    EXTRA_MOUNT_FLAGS=()
+    USED_MOUNT_NAMES=()
+}
+
+# Generate a unique mount name to avoid collisions (e.g., repo, repo-2, repo-3)
+dedupe_mount_name() {
+    local base="$1"
+    local candidate="$base"
+    local count=2
+    while :; do
+        local found=0
+        for existing in "${USED_MOUNT_NAMES[@]}"; do
+            if [[ "$candidate" == "$existing" ]]; then
+                found=1
+                break
+            fi
+        done
+        if [[ $found -eq 0 ]]; then
+            USED_MOUNT_NAMES+=("$candidate")
+            echo "$candidate"
+            return
+        fi
+        candidate="${base}-${count}"
+        count=$((count + 1))
+    done
+}
+
+# Parse a single --path/--mount spec of the form host[:name]
+add_mount_spec() {
+    local spec="$1"
+    local host="${spec%%:*}"
+    local name="${spec#*:}"
+    if [[ "$name" == "$spec" ]]; then
+        name=""
+    fi
+    if [[ -z "$host" ]]; then
+        return
+    fi
+    if [[ -z "$name" ]]; then
+        name=$(basename "$host")
+    fi
+    if [[ -z "$name" ]]; then
+        name="mount"
+    fi
+    name=$(dedupe_mount_name "$name")
+    local target="/home/agent/mounts/$name"
+    EXTRA_MOUNT_FLAGS+=(-v "$host:$target")
+}
+
+# Extract mount options from args, leaving the rest intact
+parse_mount_args() {
+    reset_mount_state
+    PARSED_ARGS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --path=*|--mount=*)
+                add_mount_spec "${1#*=}"
+                shift
+                ;;
+            --path|--mount)
+                if [[ -n "${2:-}" ]]; then
+                    add_mount_spec "$2"
+                    shift 2
+                else
+                    shift
+                fi
+                ;;
+            *)
+                PARSED_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+}
+
 # Function to show usage
 usage() {
     cat << EOF
 ${CYAN}Rize - Multi-Language AI Agent Container${NC}
 
 ${YELLOW}Usage:${NC}
-  rize install                      Install rize globally to ~/.local/bin
+  rize install [-y]                 Install rize globally to ~/.local/bin (use -y to overwrite)
   rize build [OPTIONS]              Build Docker image with specified versions
   rize shell                        Start interactive shell in container
   rize claude [args...]             Run claude code in container
@@ -159,6 +316,7 @@ ${YELLOW}Usage:${NC}
 
 ${YELLOW}Build Options:${NC}
   --go=VERSION_LIST                 Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
+  --ruby=VERSION_LIST               Comma-separated Ruby versions (default: ${DEFAULT_RUBY_VERSIONS})
   --node=VERSION_LIST               Comma-separated Node.js versions (default: ${DEFAULT_NODE_VERSIONS})
   --node-default=VERSION            Default Node.js version used for global tools (default: ${DEFAULT_NODE_DEFAULT})
   --claude-code=VERSION             Claude Code npm version (default: ${DEFAULT_CLAUDE_CODE_VERSION})
@@ -172,7 +330,7 @@ ${YELLOW}Examples:${NC}
   rize build
 
   # Build with custom versions
-  rize build --go=1.23.3,1.22.5 --node=24,22 --node-default=24 --claude-code=latest --codex=latest
+  rize build --go=1.23.3,1.22.5 --ruby=3.1.7 --node=24,22 --node-default=24 --claude-code=latest --codex=latest
 
   # Start interactive shell
   rize shell
@@ -185,6 +343,7 @@ ${YELLOW}Examples:${NC}
 
 ${YELLOW}Notes:${NC}
   - Current directory is mounted to /home/agent/workspace in container
+  - Additional mounts: use --path /host[:name] (auto-placed at /home/agent/mounts/<name>, duplicates get a suffix)
   - Claude config persists in agent-volume across runs
   - Commands run with full mise environment
 
@@ -202,6 +361,21 @@ shift
 
 case "$COMMAND" in
     install)
+        FORCE_INSTALL="${FORCE_INSTALL:-false}"
+
+        # Parse install options (-y/--yes to skip prompt)
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -y|--yes)
+                    FORCE_INSTALL="true"
+                    shift
+                    ;;
+                *)
+                    break
+                    ;;
+            esac
+        done
+
         # Create ~/.local/bin if it doesn't exist
         mkdir -p "$HOME/.local/bin"
 
@@ -259,6 +433,10 @@ case "$COMMAND" in
                     GO_VERSIONS="${1#--go=}"
                     shift
                     ;;
+                --ruby=*)
+                    RUBY_VERSIONS="${1#--ruby=}"
+                    shift
+                    ;;
                 --node=*)
                     NODE_VERSIONS="${1#--node=}"
                     shift
@@ -287,6 +465,7 @@ case "$COMMAND" in
 
         # Use defaults if not specified
         GO_VERSIONS="${GO_VERSIONS:-$DEFAULT_GO_VERSIONS}"
+        RUBY_VERSIONS="${RUBY_VERSIONS:-$DEFAULT_RUBY_VERSIONS}"
         NODE_VERSIONS="${NODE_VERSIONS:-$DEFAULT_NODE_VERSIONS}"
         NODE_DEFAULT="${NODE_DEFAULT:-$DEFAULT_NODE_DEFAULT}"
         CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-$DEFAULT_CLAUDE_CODE_VERSION}"
@@ -298,6 +477,7 @@ case "$COMMAND" in
         echo ""
         echo -e "${BLUE}Versions:${NC}"
         echo "  Go:     $GO_VERSIONS"
+        echo "  Ruby:   $RUBY_VERSIONS"
         echo "  Node:   $NODE_VERSIONS"
         echo "  Node default: $NODE_DEFAULT"
         echo "  Claude: $CLAUDE_CODE_VERSION"
@@ -315,6 +495,7 @@ case "$COMMAND" in
         docker build \
             -t rize:latest \
             --build-arg "GO_VERSIONS=$GO_VERSIONS" \
+            --build-arg "RUBY_VERSIONS=$RUBY_VERSIONS" \
             --build-arg "NODE_VERSIONS=$NODE_VERSIONS" \
             --build-arg "NODE_DEFAULT=$NODE_DEFAULT" \
             --build-arg "CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION" \
@@ -347,13 +528,16 @@ case "$COMMAND" in
 
         ensure_volume
 
+        parse_mount_args "$@"
+        set -- "${PARSED_ARGS[@]}"
+
         TTY_FLAG=$(get_tty_flag)
 
         docker run --rm $TTY_FLAG \
             -v "$(pwd):/home/agent/workspace" \
             -v "agent-volume:/home/agent/.claude" \
-            -v "agent-volume:/home/agent/.codex" \
             -v "agent-volume:/home/agent/.cache/gitstatus" \
+            "${EXTRA_MOUNT_FLAGS[@]}" \
             -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
             rize:latest
         ;;
@@ -367,14 +551,18 @@ case "$COMMAND" in
 
         ensure_volume
 
+        parse_mount_args "$@"
+        set -- "${PARSED_ARGS[@]}"
+
         TTY_FLAG=$(get_tty_flag)
 
         docker run --rm $TTY_FLAG \
             -v "$(pwd):/home/agent/workspace" \
             -v "agent-volume:/home/agent/.claude" \
             -v "agent-volume:/home/agent/.cache/gitstatus" \
+            "${EXTRA_MOUNT_FLAGS[@]}" \
             -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest claude "$@"
+            rize:latest claude --dangerously-skip-permissions "$@"
         ;;
 
     codex)
@@ -386,14 +574,40 @@ case "$COMMAND" in
 
         ensure_volume
 
+        parse_mount_args "$@"
+        set -- "${PARSED_ARGS[@]}"
+
         TTY_FLAG=$(get_tty_flag)
 
         docker run --rm $TTY_FLAG \
             -v "$(pwd):/home/agent/workspace" \
             -v "agent-volume:/home/agent/.claude" \
             -v "agent-volume:/home/agent/.cache/gitstatus" \
+            "${EXTRA_MOUNT_FLAGS[@]}" \
             -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-            rize:latest codex "$@"
+            rize:latest codex --dangerously-bypass-approvals-and-sandbox "$@"
+        ;;
+    opencode)
+        # Check if image exists
+        if ! docker image inspect rize:latest > /dev/null 2>&1; then
+            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
+            "$0" build
+        fi
+
+        ensure_volume
+
+        parse_mount_args "$@"
+        set -- "${PARSED_ARGS[@]}"
+
+        TTY_FLAG=$(get_tty_flag)
+
+        docker run --rm $TTY_FLAG \
+            -v "$(pwd):/home/agent/workspace" \
+            -v "agent-volume:/home/agent/.claude" \
+            -v "agent-volume:/home/agent/.cache/gitstatus" \
+            "${EXTRA_MOUNT_FLAGS[@]}" \
+            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+            rize:latest opencode "$@"
         ;;
 
     run|exec)
@@ -402,6 +616,9 @@ case "$COMMAND" in
             echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
             "$0" build
         fi
+
+        parse_mount_args "$@"
+        set -- "${PARSED_ARGS[@]}"
 
         if [[ $# -eq 0 ]]; then
             echo -e "${RED}Error: run/exec requires a command${NC}"
@@ -418,6 +635,7 @@ case "$COMMAND" in
             -v "$(pwd):/home/agent/workspace" \
             -v "agent-volume:/home/agent/.claude" \
             -v "agent-volume:/home/agent/.cache/gitstatus" \
+            "${EXTRA_MOUNT_FLAGS[@]}" \
             -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
             rize:latest "$@"
         ;;

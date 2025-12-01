@@ -1,42 +1,10 @@
-# Docker
-.dockerignore
-
-# Mise
-.mise.local.toml
-.mise/
-
-# IDE
+# User and editor files
+.DS_Store
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Node
-node_modules/
-npm-debug.log
-package-lock.json
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-env/
-
-# Go
-*.o
-*.a
-*.so
-.go/
-
-# Ruby
-*.gem
-.bundle/
-vendor/bundle/
-
-# Build artifacts
-dist/
-build/
+.claude/
 *.log
