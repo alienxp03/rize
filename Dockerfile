@@ -63,7 +63,7 @@ RUN curl https://mise.run | sh && \
     mv ~/.local/bin/mise /usr/local/bin/mise
 
 # Create workspace directory (as root, before switching user)
-RUN mkdir -p /workspace && chmod 777 /workspace
+RUN mkdir -p /home/agent/workspace && chmod 777 /home/agent/workspace
 
 # Create entrypoint script that initializes mise and handles commands
 RUN printf '#!/bin/bash\nset -e\ncd /home/agent\n\n# Ensure tools are installed (runs once if needed)\nmise install 2>/dev/null || true\n\n# Activate mise to set up PATH with all tools\neval "$(mise activate bash 2>/dev/null || true)"\n\n# Add npm bin directory to PATH for global packages\nNPM_BIN=$(mise exec node -- npm config get prefix 2>/dev/null)/bin\nif [ -d "$NPM_BIN" ]; then\n  export PATH="$NPM_BIN:$PATH"\nfi\n\nif [ $# -eq 0 ]; then\n    # Interactive shell - use zsh with powerline10k\n    exec /bin/zsh -l\nelse\n    # Execute command with tools available\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && \
@@ -93,7 +93,7 @@ RUN cd /home/agent && \
     mise exec node@24 -- npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 
 # Set working directory
-WORKDIR /workspace
+WORKDIR /home/agent/workspace
 
 # Use exec form entrypoint with bash
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/docker-entrypoint.sh"]
