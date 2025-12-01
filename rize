@@ -79,7 +79,7 @@ RUN curl https://mise.run | sh && \
 RUN mkdir -p /home/agent/workspace && chmod 777 /home/agent/workspace
 
 # Create entrypoint script that initializes mise and handles commands
-RUN printf '#!/bin/bash\nset -e\ncd /home/agent\n\n# Ensure tools are installed (runs once if needed)\nmise install 2>/dev/null || true\n\n# Activate mise to set up PATH with all tools\neval "$(mise activate bash 2>/dev/null || true)"\n\n# Add npm bin directory to PATH for global packages\nNPM_BIN=$(mise exec node -- npm config get prefix 2>/dev/null)/bin\nif [ -d "$NPM_BIN" ]; then\n  export PATH="$NPM_BIN:$PATH"\nfi\n\nif [ $# -eq 0 ]; then\n    # Interactive shell - use zsh with powerline10k\n    exec /bin/zsh -l\nelse\n    # Execute command with tools available\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && \
+RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\ncd /home/agent/workspace\n\n# Trust project mise config if present\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\n\n# Ensure tools are installed (runs once if needed)\nmise install 2>/dev/null || true\n\n# Activate mise to set up PATH with all tools\neval "$(mise activate bash 2>/dev/null || true)"\n\n# Add npm bin directory to PATH for global packages\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\n\nif [ $# -eq 0 ]; then\n    # Interactive shell - use zsh with powerline10k\n    exec /bin/zsh -l\nelse\n    # Execute command with tools available\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && \
     chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Switch to agent user for mise setup
@@ -336,20 +336,18 @@ case "$COMMAND" in
 
         ensure_volume
 
-        # Use -it only if stdin is a TTY (interactive)
+        # Use -it if TTY is available, otherwise use -i
+        TTY_FLAG="-i"
         if [[ -t 0 ]]; then
-            docker run --rm -it \
-                -v "$(pwd):/home/agent/workspace" \
-                -v "agent-volume:/home/agent/.claude" \
-                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-                rize:latest
-        else
-            docker run --rm \
-                -v "$(pwd):/home/agent/workspace" \
-                -v "agent-volume:/home/agent/.claude" \
-                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-                rize:latest
+            TTY_FLAG="-it"
         fi
+
+        docker run --rm $TTY_FLAG \
+            -v "$(pwd):/home/agent/workspace" \
+            -v "agent-volume:/home/agent/.claude" \
+            -v "agent-volume:/home/agent/.cache/gitstatus" \
+            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+            rize:latest
         ;;
 
     claude)
@@ -361,20 +359,18 @@ case "$COMMAND" in
 
         ensure_volume
 
-        # Use -it only if stdin is a TTY (interactive)
+        # Use -it if TTY is available, otherwise use -i
+        TTY_FLAG="-i"
         if [[ -t 0 ]]; then
-            docker run --rm -it \
-                -v "$(pwd):/home/agent/workspace" \
-                -v "agent-volume:/home/agent/.claude" \
-                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-                rize:latest claude "$@"
-        else
-            docker run --rm \
-                -v "$(pwd):/home/agent/workspace" \
-                -v "agent-volume:/home/agent/.claude" \
-                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-                rize:latest claude "$@"
+            TTY_FLAG="-it"
         fi
+
+        docker run --rm $TTY_FLAG \
+            -v "$(pwd):/home/agent/workspace" \
+            -v "agent-volume:/home/agent/.claude" \
+            -v "agent-volume:/home/agent/.cache/gitstatus" \
+            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+            rize:latest mise exec node@24 -- claude --dangerously-skip-permissions "$@"
         ;;
 
     run|exec)
@@ -393,20 +389,18 @@ case "$COMMAND" in
 
         ensure_volume
 
-        # Use -it only if stdin is a TTY (interactive)
+        # Use -it if TTY is available, otherwise use -i
+        TTY_FLAG="-i"
         if [[ -t 0 ]]; then
-            docker run --rm -it \
-                -v "$(pwd):/home/agent/workspace" \
-                -v "agent-volume:/home/agent/.claude" \
-                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-                rize:latest "$@"
-        else
-            docker run --rm \
-                -v "$(pwd):/home/agent/workspace" \
-                -v "agent-volume:/home/agent/.claude" \
-                -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
-                rize:latest "$@"
+            TTY_FLAG="-it"
         fi
+
+        docker run --rm $TTY_FLAG \
+            -v "$(pwd):/home/agent/workspace" \
+            -v "agent-volume:/home/agent/.claude" \
+            -v "agent-volume:/home/agent/.cache/gitstatus" \
+            -e CLAUDE_CONFIG_DIR=/home/agent/.claude \
+            rize:latest "$@"
         ;;
 
     --help|-h)
