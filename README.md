@@ -29,6 +29,25 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/main/rize -o ~/.loca
 - Extra mounts: `rize shell --path /abs/host/dir[:name]` (mounted at `/home/agent/mounts/<name>`)
 - Clean up Docker: `rize clean` (removes dangling images, build cache, and unused volumes)
 
+## Environment Variables
+
+Create a `~/.env` file on your host to automatically load environment variables in the container:
+
+```bash
+# Example: Go proxy configuration for internal GitLab access
+GOPROXY=https://proxy.company.com,direct
+GOPRIVATE=gitlab.company.com/*,*.company.local
+GONOPROXY=gitlab.company.com/*
+GONOSUMDB=gitlab.company.com/*
+
+# GitLab authentication
+GITLAB_TOKEN=glpat-xxxxxxxxxxxxx
+```
+
+The `.env` file is automatically sourced when the container starts, making variables available to all tools (Go, Node, Ruby, Python, etc.). The file is mounted read-only for safety—to update variables, edit `~/.env` on your host and restart the container.
+
+**Note**: This is for global environment variables. Project-specific `.env` files can also be created in the workspace directory and will be respected.
+
 ## What's Inside (high level)
 
 - Languages via mise: Go, Node, Ruby, Python (configurable versions preinstalled)

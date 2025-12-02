@@ -125,7 +125,7 @@ RUN mkdir -p /home/agent/workspace /home/agent/.claude-config && \
     chmod 777 /home/agent/workspace /home/agent/.claude-config
 
 # Create entrypoint script that initializes mise and handles commands
-RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\ncd /home/agent/workspace\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\ncd /home/agent/workspace\nif [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Switch to agent user for subsequent installations
 USER agent
@@ -263,6 +263,11 @@ build_docker_run_flags() {
     # Add CLAUDE.md mount if it exists
     if [[ -f "$HOME/.claude/CLAUDE.md" ]]; then
         flags+=(-v "$HOME/.claude/CLAUDE.md:$config_dir/CLAUDE.md")
+    fi
+
+    # Add .env mount if it exists (read-only for safety)
+    if [[ -f "$HOME/.env" ]]; then
+        flags+=(-v "$HOME/.env:/home/agent/.env:ro")
     fi
 
     # Add extra mounts
