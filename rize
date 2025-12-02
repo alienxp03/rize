@@ -270,6 +270,11 @@ build_docker_run_flags() {
         flags+=(-v "$HOME/.env:/home/agent/.env:ro")
     fi
 
+    # Add .netrc mount if it exists (read-only for safety)
+    if [[ -f "$HOME/.netrc" ]]; then
+        flags+=(-v "$HOME/.netrc:/home/agent/.netrc:ro")
+    fi
+
     # Add extra mounts
     flags+=("${EXTRA_MOUNT_FLAGS[@]}")
 

@@ -48,6 +48,28 @@ The `.env` file is automatically sourced when the container starts, making varia
 
 **Note**: This is for global environment variables. Project-specific `.env` files can also be created in the workspace directory and will be respected.
 
+### .netrc for Authentication
+
+If you have a `~/.netrc` file, it will be automatically mounted and available to tools like `git`, `curl`, and other utilities that support `.netrc` authentication:
+
+```bash
+# Example ~/.netrc for GitLab/GitHub authentication
+machine github.com
+login your-github-username
+password ghp_xxxxxxxxxxxxxx
+
+machine gitlab.company.com
+login your-gitlab-username
+password glpat-xxxxxxxxxxxxxx
+```
+
+Make sure `.netrc` has the correct permissions on your host:
+```bash
+chmod 600 ~/.netrc
+```
+
+The file is mounted read-only in the container, and tools will use it for authentication without modification.
+
 ## What's Inside (high level)
 
 - Languages via mise: Go, Node, Ruby, Python (configurable versions preinstalled)
