@@ -5,7 +5,7 @@ Fast multi-language dev box for AI agents (Claude Code, Codex, etc.) with Go/Nod
 ## Install / Update (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/main/rize -o ~/.local/bin/rize && chmod +x ~/.local/bin/rize && ~/.local/bin/rize install
+curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize -o ~/.local/bin/rize && chmod +x ~/.local/bin/rize && ~/.local/bin/rize install -y
 ```
 
 - Idempotent: running again updates the script and rebuilds if needed.
