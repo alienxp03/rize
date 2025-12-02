@@ -15,7 +15,7 @@ FROM ubuntu:24.04
 
 # Build-time arguments for multiple versions (comma-separated)
 ARG GO_VERSIONS=1.23.3,1.22.5
-ARG NODE_VERSIONS=24,22
+ARG NODE_VERSIONS=24
 ARG RUBY_VERSIONS=3.1.7,3.4.7
 ARG PYTHON_VERSIONS=3.13.0
 ARG NODE_DEFAULT=24
@@ -102,6 +102,9 @@ RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/
 
 # Make zsh the default shell for agent user
 RUN chsh -s /bin/zsh agent
+
+# Disable git status in powerlevel10k
+RUN printf 'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true\n' >> /home/agent/.zshrc
 
 # Add fzf configuration to zshrc if fzf is available
 RUN if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then \
@@ -206,7 +209,7 @@ DOCKERFILE_EOF
 DEFAULT_GO_VERSIONS="1.23.3,1.22.5"
 DEFAULT_RUBY_VERSIONS="3.1.7,3.4.7"
 DEFAULT_PYTHON_VERSIONS="3.13.0"
-DEFAULT_NODE_VERSIONS="24,22"
+DEFAULT_NODE_VERSIONS="24"
 DEFAULT_NODE_DEFAULT="24"
 DEFAULT_CLAUDE_CODE_VERSION="latest"
 DEFAULT_CODEX_VERSION="latest"
