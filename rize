@@ -246,7 +246,7 @@ get_tty_flag() {
 reset_mount_state() {
     EXTRA_MOUNT_FLAGS=()
     USED_MOUNT_NAMES=()
-    USE_HOST_NETWORK=false
+    USE_HOST_NETWORK=true
 }
 
 # Build common docker run flags
@@ -354,8 +354,8 @@ parse_mount_args() {
                     shift
                 fi
                 ;;
-            --host-network)
-                USE_HOST_NETWORK=true
+            --no-host-network|--bridge)
+                USE_HOST_NETWORK=false
                 shift
                 ;;
             *)
@@ -393,7 +393,7 @@ ${YELLOW}Build Options:${NC}
 
 ${YELLOW}Runtime Options:${NC}
   --path /host[:name]               Mount additional host path (placed at /home/agent/mounts/<name>)
-  --host-network                    Use host network (access all host ports via localhost)
+  --no-host-network                 Use bridge network instead of host (more isolated)
 
 ${YELLOW}Examples:${NC}
   # Install globally
@@ -423,23 +423,16 @@ ${YELLOW}Examples:${NC}
   # Stop all rize containers
   rize stop --all
 
-  # Access host services (PostgreSQL, Redis, etc.)
-  rize shell                        # Use host.docker.internal:5432 for postgres
-  rize shell --host-network         # Use localhost:5432 directly
+  # Access host services (PostgreSQL, Redis, etc.) - works by default
+  rize shell
+  psql -h localhost -U postgres     # Just works!
 
 ${YELLOW}Notes:${NC}
   - Current directory is mounted to /home/agent/workspace in container
   - Additional mounts: use --path /host[:name] (auto-placed at /home/agent/mounts/<name>, duplicates get a suffix)
   - Claude config persists in agent-volume across runs
   - Commands run with full mise environment
-
-${YELLOW}Host Services:${NC}
-  By default, host services (postgres, redis, etc.) are accessible via host.docker.internal:
-    psql -h host.docker.internal -U postgres
-    redis-cli -h host.docker.internal
-
-  With --host-network, use localhost directly (Linux only):
-    psql -h localhost -U postgres
+  - Host network enabled by default - localhost accesses host services (postgres, redis, etc.)
 
 EOF
     exit 0
