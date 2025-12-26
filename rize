@@ -242,10 +242,11 @@ get_tty_flag() {
     fi
 }
 
-# Reset extra mount tracking
+# Reset extra mount and network tracking
 reset_mount_state() {
     EXTRA_MOUNT_FLAGS=()
     USED_MOUNT_NAMES=()
+    USE_HOST_NETWORK=false
 }
 
 # Build common docker run flags
@@ -277,6 +278,15 @@ build_docker_run_flags() {
 
     # Add extra mounts
     flags+=("${EXTRA_MOUNT_FLAGS[@]}")
+
+    # Add network flags
+    if [[ "$USE_HOST_NETWORK" == "true" ]]; then
+        # Full host network access
+        flags+=(--network host)
+    else
+        # Bridge mode: add host.docker.internal for accessing host services
+        flags+=(--add-host=host.docker.internal:host-gateway)
+    fi
 
     printf '%s\n' "${flags[@]}"
 }
@@ -326,7 +336,7 @@ add_mount_spec() {
     EXTRA_MOUNT_FLAGS+=(-v "$host:$target")
 }
 
-# Extract mount options from args, leaving the rest intact
+# Extract mount and network options from args, leaving the rest intact
 parse_mount_args() {
     reset_mount_state
     PARSED_ARGS=()
@@ -343,6 +353,10 @@ parse_mount_args() {
                 else
                     shift
                 fi
+                ;;
+            --host-network)
+                USE_HOST_NETWORK=true
+                shift
                 ;;
             *)
                 PARSED_ARGS+=("$1")
@@ -377,6 +391,10 @@ ${YELLOW}Build Options:${NC}
   --claude-code=VERSION             Claude Code npm version (default: ${DEFAULT_CLAUDE_CODE_VERSION})
   --codex=VERSION                   Codex npm version (default: ${DEFAULT_CODEX_VERSION})
 
+${YELLOW}Runtime Options:${NC}
+  --path /host[:name]               Mount additional host path (placed at /home/agent/mounts/<name>)
+  --host-network                    Use host network (access all host ports via localhost)
+
 ${YELLOW}Examples:${NC}
   # Install globally
   rize install
@@ -405,11 +423,23 @@ ${YELLOW}Examples:${NC}
   # Stop all rize containers
   rize stop --all
 
+  # Access host services (PostgreSQL, Redis, etc.)
+  rize shell                        # Use host.docker.internal:5432 for postgres
+  rize shell --host-network         # Use localhost:5432 directly
+
 ${YELLOW}Notes:${NC}
   - Current directory is mounted to /home/agent/workspace in container
   - Additional mounts: use --path /host[:name] (auto-placed at /home/agent/mounts/<name>, duplicates get a suffix)
   - Claude config persists in agent-volume across runs
   - Commands run with full mise environment
+
+${YELLOW}Host Services:${NC}
+  By default, host services (postgres, redis, etc.) are accessible via host.docker.internal:
+    psql -h host.docker.internal -U postgres
+    redis-cli -h host.docker.internal
+
+  With --host-network, use localhost directly (Linux only):
+    psql -h localhost -U postgres
 
 EOF
     exit 0
