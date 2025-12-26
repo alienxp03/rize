@@ -364,6 +364,8 @@ ${YELLOW}Usage:${NC}
   rize claude [args...]             Run claude code in container
   rize run <cmd> [args...]          Run a command in container
   rize exec <cmd> [args...]         Execute a command in container (alias for run)
+  rize ps                           List running rize containers
+  rize stop [ID|--all]              Stop a container by ID or name (--all to stop all)
   rize clean                        Clean up Docker system (images, cache, volumes)
 
 ${YELLOW}Build Options:${NC}
@@ -393,6 +395,15 @@ ${YELLOW}Examples:${NC}
 
   # Check Go version
   rize exec go version
+
+  # List running containers
+  rize ps
+
+  # Stop a specific container
+  rize stop abc123
+
+  # Stop all rize containers
+  rize stop --all
 
 ${YELLOW}Notes:${NC}
   - Current directory is mounted to /home/agent/workspace in container
@@ -668,6 +679,102 @@ case "$COMMAND" in
         TTY_FLAG=$(get_tty_flag)
 
         docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest "$@"
+        ;;
+
+    ps)
+        # List running rize containers
+        echo -e "${CYAN}Running Rize Containers${NC}"
+        echo ""
+
+        # Get running containers using rize:latest image
+        CONTAINERS=$(docker ps --filter "ancestor=rize:latest" --format "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.RunningFor}}" 2>/dev/null)
+
+        if [[ -z "$CONTAINERS" ]]; then
+            echo -e "${YELLOW}No running rize containers${NC}"
+            exit 0
+        fi
+
+        # Print header
+        printf "${BLUE}%-15s %-25s %-20s %-15s %-40s${NC}\n" "CONTAINER ID" "NAME" "STATUS" "RUNNING" "WORKSPACE"
+        echo "─────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+
+        # Process each container
+        while IFS=$'\t' read -r id name status running; do
+            # Get workspace mount path from container inspect
+            workspace=$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/home/agent/workspace"}}{{.Source}}{{end}}{{end}}' "$id" 2>/dev/null)
+
+            # Truncate workspace if too long
+            if [[ ${#workspace} -gt 38 ]]; then
+                workspace="...${workspace: -35}"
+            fi
+
+            printf "%-15s %-25s %-20s %-15s %-40s\n" "$id" "$name" "$status" "$running" "$workspace"
+        done <<< "$CONTAINERS"
+
+        echo ""
+        echo -e "${BLUE}Total: $(echo "$CONTAINERS" | wc -l) container(s)${NC}"
+        ;;
+
+    stop)
+        # Stop rize containers
+        if [[ $# -eq 0 ]]; then
+            echo -e "${RED}Error: stop requires a container ID/name or --all${NC}"
+            echo ""
+            echo -e "${YELLOW}Usage:${NC}"
+            echo "  rize stop <container-id>    Stop specific container"
+            echo "  rize stop <container-name>  Stop by container name"
+            echo "  rize stop --all             Stop all rize containers"
+            echo ""
+            echo -e "${BLUE}Tip: Use 'rize ps' to list running containers${NC}"
+            exit 1
+        fi
+
+        case "$1" in
+            --all|-a)
+                # Get all running rize containers
+                CONTAINERS=$(docker ps --filter "ancestor=rize:latest" --format "{{.ID}}" 2>/dev/null)
+
+                if [[ -z "$CONTAINERS" ]]; then
+                    echo -e "${YELLOW}No running rize containers to stop${NC}"
+                    exit 0
+                fi
+
+                COUNT=$(echo "$CONTAINERS" | wc -l)
+                echo -e "${BLUE}Stopping $COUNT rize container(s)...${NC}"
+
+                echo "$CONTAINERS" | while read -r id; do
+                    name=$(docker inspect --format '{{.Name}}' "$id" 2>/dev/null | sed 's/^\///')
+                    echo -e "  Stopping ${CYAN}$id${NC} ($name)..."
+                    docker stop "$id" >/dev/null 2>&1 && \
+                        echo -e "    ${GREEN}✓ Stopped${NC}" || \
+                        echo -e "    ${RED}✗ Failed to stop${NC}"
+                done
+
+                echo ""
+                echo -e "${GREEN}✓ All rize containers stopped${NC}"
+                ;;
+            *)
+                # Stop specific container
+                CONTAINER="$1"
+
+                # Check if container exists and is a rize container
+                if ! docker ps --filter "ancestor=rize:latest" --format "{{.ID}} {{.Names}}" 2>/dev/null | grep -qE "(^$CONTAINER |$CONTAINER$| $CONTAINER$)"; then
+                    echo -e "${RED}Error: '$CONTAINER' is not a running rize container${NC}"
+                    echo ""
+                    echo -e "${BLUE}Running rize containers:${NC}"
+                    docker ps --filter "ancestor=rize:latest" --format "  {{.ID}}  {{.Names}}" 2>/dev/null || echo "  (none)"
+                    exit 1
+                fi
+
+                echo -e "${BLUE}Stopping container ${CYAN}$CONTAINER${BLUE}...${NC}"
+                if docker stop "$CONTAINER" >/dev/null 2>&1; then
+                    echo -e "${GREEN}✓ Container stopped${NC}"
+                else
+                    echo -e "${RED}✗ Failed to stop container${NC}"
+                    exit 1
+                fi
+                ;;
+        esac
         ;;
 
     clean)
