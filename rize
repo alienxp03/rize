@@ -79,6 +79,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g-dev \
     libreadline-dev \
     libyaml-dev \
+    libpq-dev \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -86,22 +87,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Generate UTF-8 locale
 RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
-# Create non-root user with home directory and make it world-writable
-RUN useradd -m -s /bin/bash agent && \
-    chmod 777 /home/agent
-
-# Create .local directory for persistent storage (config, cache, etc.) - do this early before other tools create subdirectories
-RUN mkdir -p /home/agent/.local && \
-    chown -R agent:agent /home/agent/.local && \
-    chmod 755 /home/agent/.local
+# Create non-root user with home directory
+RUN if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi && \
+    useradd -m -u 1000 -s /bin/bash agent && \
+    mkdir -p /home/agent/workspace /home/agent/.claude-config /home/agent/.local && \
+    chown -R agent:agent /home/agent && \
+    chmod 755 /home/agent
 
 # Install zsh with powerline10k theme (from Claude Code's devcontainer)
 ARG ZSH_IN_DOCKER_VERSION=1.2.1
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
-  -x
-
-# Make zsh the default shell for agent user
-RUN chsh -s /bin/zsh agent
+  -x -u agent
 
 # Disable git status in powerlevel10k
 RUN printf 'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true\n' >> /home/agent/.zshrc
@@ -113,39 +109,35 @@ RUN if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then \
       echo "source /usr/share/doc/fzf/examples/completion.zsh" >> /home/agent/.zshrc; \
     fi
 
-# Ensure agent owns its home (needed before switching users)
-RUN chown -R agent:agent /home/agent
-
 # Install mise using official installer
 RUN curl https://mise.run | sh && \
-    mv ~/.local/bin/mise /usr/local/bin/mise
+    mv /home/agent/.local/bin/mise /usr/local/bin/mise
 
-# Create workspace and config directories with proper permissions
-RUN mkdir -p /home/agent/workspace /home/agent/.claude-config && \
-    chmod 777 /home/agent/workspace /home/agent/.claude-config
+# Final home ownership fix before switching users
+RUN chown -R agent:agent /home/agent
 
 # Create entrypoint script that initializes mise and handles commands
 RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\ncd /home/agent/workspace\nif [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Install Homebrew in standard location for binary support
+RUN mkdir -p /home/linuxbrew/.linuxbrew && \
+    chown -R agent:agent /home/linuxbrew && \
+    chmod -R 755 /home/linuxbrew
+
 # Switch to agent user for subsequent installations
 USER agent
 
-# Install Homebrew as agent (non-interactive, user prefix)
-RUN mkdir -p /home/agent/.linuxbrew && \
-    git clone https://github.com/Homebrew/brew /home/agent/.linuxbrew/Homebrew && \
-    mkdir -p /home/agent/.linuxbrew/bin && \
-    ln -s ../Homebrew/bin/brew /home/agent/.linuxbrew/bin/brew && \
-    eval "$(/home/agent/.linuxbrew/bin/brew shellenv)" && \
+# Install Homebrew as agent (non-interactive)
+RUN git clone https://github.com/Homebrew/brew /home/linuxbrew/.linuxbrew/Homebrew && \
+    mkdir -p /home/linuxbrew/.linuxbrew/bin && \
+    ln -s ../Homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew && \
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && \
     brew update --force --quiet && \
     cat <<'BREWRC' >> ~/.zshrc
-test -d ~/.linuxbrew && eval "$(~/.linuxbrew/bin/brew shellenv)"
-test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-eval "$($(brew --prefix)/bin/brew shellenv)"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 BREWRC
 RUN cat <<'BREWRC' >> ~/.bashrc
-test -d ~/.linuxbrew && eval "$(~/.linuxbrew/bin/brew shellenv)"
-test -d /home/linuxbrew/.linuxbrew && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-eval "$($(brew --prefix)/bin/brew shellenv)"
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 BREWRC
 
 # Initialize mise
@@ -248,37 +240,76 @@ reset_mount_state() {
     USED_MOUNT_NAMES=()
 }
 
+# Determine correct md5 command
+get_md5() {
+    if command -v md5sum >/dev/null 2>&1; then
+        echo "$1" | md5sum | cut -d' ' -f1
+    else
+        echo "$1" | md5 | cut -d' ' -f1
+    fi
+}
+
+# Portable xargs -r for macOS/Linux
+xargs_run() {
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS xargs doesn't have -r, but we can check if stdin is empty
+        local input
+        input=$(cat)
+        if [[ -n "$input" ]]; then
+            echo "$input" | xargs "$@"
+        fi
+    else
+        xargs -r "$@"
+    fi
+}
+
+# Check if docker is running
+check_docker() {
+    if ! docker info >/dev/null 2>&1; then
+        echo -e "${RED}Error: Docker is not running or you don't have permissions.${NC}"
+        echo -e "${YELLOW}Please start Docker and try again.${NC}"
+        exit 1
+    fi
+}
+
 # Build common docker run flags
 # Usage: DOCKER_FLAGS=$(build_docker_run_flags [config_dir])
 build_docker_run_flags() {
     local config_dir="${1:-/home/agent/.claude-config}"
     local flags=()
 
+    # Generate project-specific vendor volume name (sanitize for docker)
+    local project_name=$(basename "$(pwd)" | tr -cd '[:alnum:]_.-')
+    local project_hash=$(get_md5 "$(pwd)" | cut -c1-8)
+    local vendor_volume="rize-vendor-${project_name}-${project_hash}"
+
     flags+=(
-        -v "$(pwd):/home/agent/workspace"
-        -v "agent-data:/home/agent/.claude-config"
-        -e "CLAUDE_CONFIG_DIR=$config_dir"
+        "-v" "$(pwd):/home/agent/workspace"
+        "-v" "${vendor_volume}:/home/agent/workspace/vendor"
+        "-v" "agent-data:/home/agent/.claude-config"
+        "-e" "CLAUDE_CONFIG_DIR=$config_dir"
     )
 
     # Add CLAUDE.md mount if it exists
     if [[ -f "$HOME/.claude/CLAUDE.md" ]]; then
-        flags+=(-v "$HOME/.claude/CLAUDE.md:$config_dir/CLAUDE.md")
+        flags+=("-v" "$HOME/.claude/CLAUDE.md:$config_dir/CLAUDE.md")
     fi
 
     # Add .env mount if it exists (read-only for safety)
     if [[ -f "$HOME/.env" ]]; then
-        flags+=(-v "$HOME/.env:/home/agent/.env:ro")
+        flags+=("-v" "$HOME/.env:/home/agent/.env:ro")
     fi
 
     # Add .netrc mount if it exists (read-only for safety)
     if [[ -f "$HOME/.netrc" ]]; then
-        flags+=(-v "$HOME/.netrc:/home/agent/.netrc:ro")
+        flags+=("-v" "$HOME/.netrc:/home/agent/.netrc:ro")
     fi
 
     # Add extra mounts
     flags+=("${EXTRA_MOUNT_FLAGS[@]}")
 
-    printf '%s\n' "${flags[@]}"
+    # Output flags separated by null bytes to handle spaces correctly
+    printf '%s\0' "${flags[@]}"
 }
 
 # Generate a unique mount name to avoid collisions (e.g., repo, repo-2, repo-3)
@@ -404,6 +435,20 @@ EOF
     exit 0
 }
 
+# Run docker with correctly parsed flags
+run_rize() {
+    ensure_volume
+    
+    local flags=()
+    # Read null-terminated flags into array
+    while IFS= read -r -d '' flag; do
+        flags+=("$flag")
+    done < <(build_docker_run_flags)
+    
+    local tty_flag=$(get_tty_flag)
+    docker run --rm $tty_flag "${flags[@]}" rize:latest "$@"
+}
+
 # Parse command line arguments
 if [[ $# -eq 0 ]]; then
     usage
@@ -442,8 +487,19 @@ case "$COMMAND" in
             fi
         fi
 
+        check_docker
+
+        # Determine script source
+        if [[ -f "$0" ]]; then
+            SCRIPT_SRC="$0"
+        else
+            echo -e "${RED}Error: Cannot determine script source for installation.${NC}"
+            echo -e "${YELLOW}Please use the recommended one-liner from README.${NC}"
+            exit 1
+        fi
+
         # Copy script
-        cp "$0" "$HOME/.local/bin/rize"
+        cp "$SCRIPT_SRC" "$HOME/.local/bin/rize"
         chmod +x "$HOME/.local/bin/rize"
 
         # Create volume
@@ -454,8 +510,9 @@ case "$COMMAND" in
 
         # Check if image exists, build if not
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
+            echo -e "${YELLOW}Warning: The first-time build can take 15-30 minutes and requires ~5GB of space.${NC}"
             echo -e "${BLUE}Building Docker image...${NC}"
-            "$0" build
+            "$HOME/.local/bin/rize" build
         else
             echo -e "${GREEN}✓ Docker image already built${NC}"
             echo ""
@@ -463,10 +520,28 @@ case "$COMMAND" in
 
         # Check if ~/.local/bin is in PATH
         if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-            echo -e "${YELLOW}Note: $HOME/.local/bin is not in your PATH${NC}"
-            echo -e "${BLUE}Add this to your shell config (~/.bashrc, ~/.zshrc, etc.):${NC}"
-            echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-            echo ""
+            echo -e "${YELLOW}Adding $HOME/.local/bin to PATH in ~/.bashrc and ~/.zshrc...${NC}"
+            
+            PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
+            
+            # Update .bashrc
+            if [[ -f "$HOME/.bashrc" ]]; then
+                if ! grep -qxF "$PATH_LINE" "$HOME/.bashrc"; then
+                    echo "$PATH_LINE" >> "$HOME/.bashrc"
+                    echo -e "${GREEN}✓ Added to ~/.bashrc${NC}"
+                fi
+            fi
+            
+            # Update .zshrc
+            if [[ -f "$HOME/.zshrc" ]]; then
+                if ! grep -qxF "$PATH_LINE" "$HOME/.zshrc"; then
+                    echo "$PATH_LINE" >> "$HOME/.zshrc"
+                    echo -e "${GREEN}✓ Added to ~/.zshrc${NC}"
+                fi
+            fi
+            
+            # Also export for current session
+            export PATH="$HOME/.local/bin:$PATH"
         fi
 
         echo -e "${BLUE}You can now use 'rize' from any directory${NC}"
@@ -479,6 +554,8 @@ case "$COMMAND" in
         ;;
 
     build)
+        check_docker
+
         # Parse build options
         while [[ $# -gt 0 ]]; do
             case "$1" in
@@ -542,6 +619,8 @@ case "$COMMAND" in
         echo "  Claude:   $CLAUDE_CODE_VERSION"
         echo "  Codex:    $CODEX_VERSION"
         echo ""
+        echo -e "${YELLOW}Note: This build can take 15-30 minutes and requires ~5GB of disk space.${NC}"
+        echo ""
 
         # Create temporary directory for Dockerfile
         TEMP_DIR=$(mktemp -d)
@@ -578,79 +657,73 @@ case "$COMMAND" in
         ;;
 
     shell)
+        check_docker
+
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
             echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "$0" build
+            "rize" build
         fi
 
         echo -e "${BLUE}Starting interactive shell...${NC}"
 
-        ensure_volume
-
         parse_mount_args "$@"
         set -- "${PARSED_ARGS[@]}"
 
-        TTY_FLAG=$(get_tty_flag)
-
-        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest
+        run_rize
         ;;
 
     claude)
+        check_docker
+
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
             echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "$0" build
+            "rize" build
         fi
-
-        ensure_volume
 
         parse_mount_args "$@"
         set -- "${PARSED_ARGS[@]}"
 
-        TTY_FLAG=$(get_tty_flag)
-
-        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest claude --dangerously-skip-permissions "$@"
+        run_rize claude --dangerously-skip-permissions "$@"
         ;;
 
     codex)
+        check_docker
+
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
             echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "$0" build
+            "rize" build
         fi
-
-        ensure_volume
 
         parse_mount_args "$@"
         set -- "${PARSED_ARGS[@]}"
 
-        TTY_FLAG=$(get_tty_flag)
-
-        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest codex --dangerously-bypass-approvals-and-sandbox "$@"
+        run_rize codex --dangerously-bypass-approvals-and-sandbox "$@"
         ;;
     opencode)
+        check_docker
+
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
             echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "$0" build
+            "rize" build
         fi
-
-        ensure_volume
 
         parse_mount_args "$@"
         set -- "${PARSED_ARGS[@]}"
 
-        TTY_FLAG=$(get_tty_flag)
-
-        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest opencode "$@"
+        run_rize opencode "$@"
         ;;
 
     run|exec)
+        check_docker
+
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
             echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "$0" build
+            "rize" build
         fi
 
         parse_mount_args "$@"
@@ -663,32 +736,24 @@ case "$COMMAND" in
 
         echo -e "${BLUE}Running: $@${NC}"
 
-        ensure_volume
-
-        TTY_FLAG=$(get_tty_flag)
-
-        docker run --rm $TTY_FLAG $(build_docker_run_flags) rize:latest "$@"
+        run_rize "$@"
         ;;
 
     clean)
-        echo -e "${BLUE}Cleaning up Docker system...${NC}"
+        echo -e "${BLUE}Cleaning up Rize-related Docker resources...${NC}"
         echo ""
+
+        check_docker
+
+        echo -e "${BLUE}Removing Rize image...${NC}"
+        docker image rm rize:latest 2>/dev/null || true
 
         echo -e "${BLUE}Removing dangling images...${NC}"
         docker image prune -f >/dev/null 2>&1
 
-        echo -e "${BLUE}Pruning build cache...${NC}"
-        docker buildx prune -af >/dev/null 2>&1
+        echo -e "${BLUE}Removing Rize vendor volumes...${NC}"
+        docker volume ls -q -f name=rize-vendor- | xargs_run docker volume rm 2>/dev/null || true
 
-        echo -e "${BLUE}Cleaning up stopped containers...${NC}"
-        docker container prune -f >/dev/null 2>&1
-
-        echo -e "${BLUE}Removing unused volumes...${NC}"
-        docker volume prune -f >/dev/null 2>&1
-
-        echo ""
-        echo -e "${BLUE}Docker system usage:${NC}"
-        docker system df
         echo ""
         echo -e "${GREEN}✓ Cleanup complete!${NC}"
         ;;

@@ -5,7 +5,7 @@ Fast multi-language dev box for AI agents (Claude Code, Codex, etc.) with Go/Nod
 ## Install / Update (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize -o ~/.local/bin/rize && chmod +x ~/.local/bin/rize && ~/.local/bin/rize install -y
+curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize -o /tmp/rize && bash /tmp/rize install -y && rm /tmp/rize
 ```
 
 - Idempotent: running again updates the script and rebuilds if needed.
@@ -64,6 +64,7 @@ password glpat-xxxxxxxxxxxxxx
 ```
 
 Make sure `.netrc` has the correct permissions on your host:
+
 ```bash
 chmod 600 ~/.netrc
 ```
@@ -79,14 +80,42 @@ The file is mounted read-only in the container, and tools will use it for authen
 - Utils: curl/wget/httpie, zip/tar/rsync, htop/lsof/file, Homebrew (user prefix)
 - Prompt: zsh + powerlevel10k, fzf keybindings
 
+## Per-Project Vendor Caching
+
+Rize manages gem/dependency caches on a per-project basis using Docker volumes. Each project gets its own vendor volume:
+
+- Volume naming: `rize-vendor-{project-name}-{path-hash}`
+- Example: `rize-vendor-my-app-a1b2c3d4`
+
+This means:
+
+- First `bundle install` in a project compiles gems for Linux and caches them
+- Subsequent runs reuse cached gems (fast)
+- Switching between projects with different dependencies doesn't cause conflicts
+
+To list all vendor volumes:
+
+```bash
+docker volume ls | grep rize-vendor
+```
+
+To remove a specific project's vendor cache:
+
+```bash
+docker volume rm rize-vendor-project-name-abc12345
+```
+
 ## Uninstall
 
 ```bash
 rm -f ~/.local/bin/rize
 docker image rm rize:latest 2>/dev/null || true
 docker volume rm agent-data 2>/dev/null || true
+# Remove project-specific vendor volumes if desired:
+docker volume rm $(docker volume ls -q | grep rize-vendor) 2>/dev/null || true
 ```
 
 ## Notes
 
 - Workspace mounts to `/home/agent/workspace`; extra mounts go under `/home/agent/mounts/<name>`.
+- Vendor directory is managed via Docker volumes to avoid filesystem permission conflicts between macOS and Linux.
