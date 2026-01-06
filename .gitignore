@@ -8,3 +8,5 @@
 
 .claude/
 *.log
+
+Dockerfile

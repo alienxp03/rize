@@ -5,10 +5,11 @@ Fast multi-language dev box for AI agents (Claude Code, Codex, etc.) with Go/Nod
 ## Install / Update (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize -o /tmp/rize && bash /tmp/rize install -y && rm /tmp/rize
+curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize | bash
 ```
 
-- Idempotent: running again updates the script and rebuilds if needed.
+- Idempotent: running again updates the script.
+- Pulls pre-built Docker image (~5GB) from Docker Hub - no local build required.
 - Requires Docker available locally.
 
 ## AI Agent Usage
@@ -21,13 +22,19 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/ri
 
 ## Commands
 
-- Build with defaults: `rize build`
-- Custom versions: `rize build --go=1.23.3,1.22.5 --ruby=3.1.7 --python=3.13.0 --node=24,22`
 - Interactive shell: `rize shell`
 - Run command: `rize run <cmd>` (alias `rize exec`)
 - Run Claude Code: `rize claude <args>`
 - Extra mounts: `rize shell --path /abs/host/dir[:name]` (mounted at `/home/agent/mounts/<name>`)
 - Clean up Docker: `rize clean` (removes dangling images, build cache, and unused volumes)
+
+### Multi-Project Support
+
+Each project gets its own workspace directory inside the container:
+- `/home/agent/workspace/my-app` - Project named "my-app"
+- `/home/agent/workspace/my-app-2` - Second project also named "my-app"
+
+The project name is derived from the basename of the current directory. If you have multiple directories with the same name, they automatically get numeric suffixes to avoid conflicts.
 
 ## Environment Variables
 
@@ -117,5 +124,5 @@ docker volume rm $(docker volume ls -q | grep rize-vendor) 2>/dev/null || true
 
 ## Notes
 
-- Workspace mounts to `/home/agent/workspace`; extra mounts go under `/home/agent/mounts/<name>`.
+- Workspace mounts to `/home/agent/workspace/<project-name>`; extra mounts go under `/home/agent/mounts/<name>`.
 - Vendor directory is managed via Docker volumes to avoid filesystem permission conflicts between macOS and Linux.

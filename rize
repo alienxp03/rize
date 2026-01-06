@@ -11,16 +11,20 @@ NC='\033[0m' # No Color
 
 # Embedded Dockerfile content
 DOCKERFILE_CONTENT=$(cat <<'DOCKERFILE_EOF'
-FROM ubuntu:24.04
+# =============================================================================
+# Stage 1: Base - System dependencies, user setup, mise, zsh
+# This stage rarely changes and provides the foundation
+# =============================================================================
+FROM ubuntu:24.04 AS base
 
-# Build-time arguments for multiple versions (comma-separated)
-ARG GO_VERSIONS=1.23.3,1.22.5
-ARG NODE_VERSIONS=24
-ARG RUBY_VERSIONS=3.1.7,3.4.7
-ARG PYTHON_VERSIONS=3.13.0
-ARG NODE_DEFAULT=24
-ARG CLAUDE_CODE_VERSION=latest
-ARG CODEX_VERSION=latest
+# Build-time arguments (set via --build-arg, no defaults here)
+ARG GO_VERSIONS
+ARG NODE_VERSIONS
+ARG RUBY_VERSIONS
+ARG PYTHON_VERSIONS
+ARG NODE_DEFAULT
+ARG CLAUDE_CODE_VERSION
+ARG CODEX_VERSION
 
 # Non-interactive setup
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -31,7 +35,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     SHELL=/bin/zsh \
     EDITOR=vim \
     LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8
+    LC_ALL=en_US.UTF-8 \
+    ZSH_DISABLE_COMPFIX=true
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -101,6 +106,9 @@ ARG ZSH_IN_DOCKER_VERSION=1.2.1
 RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
   -x -u agent
 
+# Fix oh-my-zsh directory permissions (remove group/other write)
+RUN find /home/agent/.oh-my-zsh -type d -exec chmod go-w {} \; 2>/dev/null || true
+
 # Disable git status in powerlevel10k
 RUN printf 'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true\n' >> /home/agent/.zshrc
 
@@ -117,10 +125,6 @@ RUN curl https://mise.run | sh && \
 
 # Final home ownership fix before switching users
 RUN chown -R agent:agent /home/agent
-
-# Create entrypoint script that initializes mise and handles commands
-RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\n# Fix workspace permissions if mounted by root\nif [ "$(stat -c %%u /home/agent/workspace)" != "$(id -u agent)" ]; then\n  sudo chown agent:agent /home/agent/workspace\nfi\ncd /home/agent/workspace\n' > /usr/local/bin/docker-entrypoint.sh && \
-    printf 'if [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' >> /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Install Homebrew in standard location for binary support
 RUN mkdir -p /home/linuxbrew/.linuxbrew && \
@@ -143,6 +147,12 @@ RUN cat <<'BREWRC' >> ~/.bashrc
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 BREWRC
 
+# =============================================================================
+# Stage 2: Languages - Pre-install all language versions via mise
+# This stage caches language installations separately from tools
+# =============================================================================
+FROM base AS languages
+
 # Initialize mise
 RUN mise --version
 
@@ -163,6 +173,12 @@ RUN /bin/bash -c 'cd /home/agent; GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1
 
 # Set global default for Node and pre-install versions
 RUN /bin/bash -c 'cd /home/agent; NODE_DEFAULT="${NODE_DEFAULT}"; echo "Setting Node default: ${NODE_DEFAULT}"; mise use -g node@"$NODE_DEFAULT"; echo "Pre-installing default Node version: ${NODE_DEFAULT}"; mise install node@"$NODE_DEFAULT"; IFS="," read -ra NODE_LIST <<< "$NODE_VERSIONS"; echo "Pre-installing Node versions: ${NODE_LIST[*]}"; for v in "${NODE_LIST[@]}"; do mise install node@"$v"; done'
+
+# =============================================================================
+# Stage 3: Tools - Install development tools (npm packages, Go tools, etc.)
+# This stage caches tool installations separately from entrypoint changes
+# =============================================================================
+FROM languages AS tools
 
 # Install Claude Code and Codex using the default Node version
 RUN NODE_DEFAULT="${NODE_DEFAULT}" && \
@@ -191,8 +207,22 @@ RUN pipx ensurepath && \
     pipx install uv && \
     pipx install yq || true
 
+# =============================================================================
+# Stage 4: Final - Entrypoint script and configuration
+# This stage is rebuilt when the rize script changes, but tools remain cached
+# =============================================================================
+FROM tools AS final
+
+# Switch back to root for entrypoint creation
+USER root
+
+# Create entrypoint script that initializes mise and handles commands
+# NOTE: This is the ONLY layer that rebuilds when the rize script is modified
+RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\n# Use dynamic workspace path from environment, or default to old behavior\nRIZE_WORKSPACE_PATH="${RIZE_WORKSPACE_PATH:-/home/agent/workspace}"\n# Ensure workspace directory exists and has correct permissions\nif [ ! -d "$RIZE_WORKSPACE_PATH" ]; then\n  mkdir -p "$RIZE_WORKSPACE_PATH"\nfi\nif [ "$(stat -c %%u "$RIZE_WORKSPACE_PATH")" != "$(id -u agent)" ]; then\n  sudo chown agent:agent "$RIZE_WORKSPACE_PATH"\nfi\ncd "$RIZE_WORKSPACE_PATH"\n' > /usr/local/bin/docker-entrypoint.sh && \
+    printf 'if [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n  export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' >> /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Set working directory
-WORKDIR /home/agent/workspace
+WORKDIR /home/agent
 
 # Use exec form entrypoint with bash
 ENTRYPOINT ["/bin/bash", "/usr/local/bin/docker-entrypoint.sh"]
@@ -200,23 +230,7 @@ CMD []
 DOCKERFILE_EOF
 )
 
-# Default versions
-DEFAULT_GO_VERSIONS="1.23.3,1.22.5"
-DEFAULT_RUBY_VERSIONS="3.1.7,3.4.7"
-DEFAULT_PYTHON_VERSIONS="3.13.0"
-DEFAULT_NODE_VERSIONS="24"
-DEFAULT_NODE_DEFAULT="24"
-DEFAULT_CLAUDE_CODE_VERSION="latest"
-DEFAULT_CODEX_VERSION="latest"
-
 # Variables to track what was provided
-GO_VERSIONS=""
-RUBY_VERSIONS=""
-PYTHON_VERSIONS=""
-NODE_VERSIONS=""
-NODE_DEFAULT=""
-CLAUDE_CODE_VERSION=""
-CODEX_VERSION=""
 COMMAND=""
 ARGS=()
 
@@ -281,16 +295,25 @@ build_docker_run_flags() {
     local config_dir="${1:-/home/agent/.claude-config}"
     local flags=()
 
-    # Generate project-specific vendor volume name (sanitize for docker)
-    local project_name=$(basename "$(pwd)" | tr -cd '[:alnum:]_.-')
+    # Generate project name from current directory
+    local base_project_name=$(basename "$(pwd)" | tr -cd '[:alnum:]_.-')
+    [[ -z "$base_project_name" ]] && base_project_name="project"
+
+    # Initialize used mount names with project name to avoid conflicts with extra mounts
+    # USED_MOUNT_NAMES=("$base_project_name")
+    local project_name=$(dedupe_mount_name "$base_project_name")
     local project_hash=$(get_md5 "$(pwd)" | cut -c1-8)
+
+    # New dynamic workspace path
+    local workspace_path="/home/agent/workspace/${project_name}"
     local vendor_volume="rize-vendor-${project_name}-${project_hash}"
 
     flags+=(
-        "-v" "$(pwd):/home/agent/workspace"
-        "-v" "${vendor_volume}:/home/agent/workspace/vendor"
+        "-v" "$(pwd):${workspace_path}"
+        "-v" "${vendor_volume}:${workspace_path}/vendor"
         "-v" "agent-data:/home/agent/.claude-config"
         "-e" "CLAUDE_CONFIG_DIR=$config_dir"
+        "-e" "RIZE_WORKSPACE_PATH=${workspace_path}"
     )
 
     # Add CLAUDE.md mount if it exists
@@ -393,31 +416,15 @@ ${CYAN}Rize - Multi-Language AI Agent Container${NC}
 
 ${YELLOW}Usage:${NC}
   rize install [-y]                 Install rize globally to ~/.local/bin (use -y to overwrite)
-  rize build [OPTIONS]              Build Docker image with specified versions
   rize shell                        Start interactive shell in container
   rize claude [args...]             Run claude code in container
   rize run <cmd> [args...]          Run a command in container
   rize exec <cmd> [args...]         Execute a command in container (alias for run)
   rize clean                        Clean up Docker system (images, cache, volumes)
 
-${YELLOW}Build Options:${NC}
-  --go=VERSION_LIST                 Comma-separated Go versions (default: ${DEFAULT_GO_VERSIONS})
-  --ruby=VERSION_LIST               Comma-separated Ruby versions (default: ${DEFAULT_RUBY_VERSIONS})
-  --python=VERSION_LIST             Comma-separated Python versions (default: ${DEFAULT_PYTHON_VERSIONS})
-  --node=VERSION_LIST               Comma-separated Node.js versions (default: ${DEFAULT_NODE_VERSIONS})
-  --node-default=VERSION            Default Node.js version used for global tools (default: ${DEFAULT_NODE_DEFAULT})
-  --claude-code=VERSION             Claude Code npm version (default: ${DEFAULT_CLAUDE_CODE_VERSION})
-  --codex=VERSION                   Codex npm version (default: ${DEFAULT_CODEX_VERSION})
-
 ${YELLOW}Examples:${NC}
   # Install globally
   rize install
-
-  # Build with default versions
-  rize build
-
-  # Build with custom versions
-  rize build --go=1.23.3,1.22.5 --ruby=3.1.7 --python=3.13.0 --node=24,22 --node-default=24 --claude-code=latest --codex=latest
 
   # Start interactive shell
   rize shell
@@ -429,8 +436,9 @@ ${YELLOW}Examples:${NC}
   rize exec go version
 
 ${YELLOW}Notes:${NC}
-  - Current directory is mounted to /home/agent/workspace in container
-  - Additional mounts: use --path /host[:name] (auto-placed at /home/agent/mounts/<name>, duplicates get a suffix)
+  - Current directory is mounted to /home/agent/workspace/<project-name> in container
+  - Multiple projects with same name get numeric suffix (app, app-2, app-3)
+  - Additional mounts: use --path /host[:name] (auto-placed at /home/agent/mounts/<name>)
   - Claude config persists in agent-volume across runs
   - Commands run with full mise environment
 
@@ -441,24 +449,26 @@ EOF
 # Run docker with correctly parsed flags
 run_rize() {
     ensure_volume
-    
+
     local flags=()
     # Read null-terminated flags into array
     while IFS= read -r -d '' flag; do
         flags+=("$flag")
     done < <(build_docker_run_flags)
-    
+
     local tty_flag=$(get_tty_flag)
     docker run --rm $tty_flag "${flags[@]}" rize:latest "$@"
 }
 
 # Parse command line arguments
 if [[ $# -eq 0 ]]; then
-    usage
+    # When called via pipe (curl | bash), auto-install
+    COMMAND="install"
+    FORCE_INSTALL="true"
+else
+    COMMAND="$1"
+    shift
 fi
-
-COMMAND="$1"
-shift
 
 case "$COMMAND" in
     install)
@@ -494,15 +504,13 @@ case "$COMMAND" in
 
         # Determine script source
         if [[ -f "$0" ]]; then
-            SCRIPT_SRC="$0"
+            # Script is running from a file - copy directly
+            cp "$0" "$HOME/.local/bin/rize"
         else
-            echo -e "${RED}Error: Cannot determine script source for installation.${NC}"
-            echo -e "${YELLOW}Please use the recommended one-liner from README.${NC}"
-            exit 1
+            # Script is piped via curl | bash - download from GitHub
+            echo -e "${BLUE}Downloading rize script from GitHub...${NC}"
+            curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize -o "$HOME/.local/bin/rize"
         fi
-
-        # Copy script
-        cp "$SCRIPT_SRC" "$HOME/.local/bin/rize"
         chmod +x "$HOME/.local/bin/rize"
 
         # Create volume
@@ -511,22 +519,29 @@ case "$COMMAND" in
         echo -e "${GREEN}✓ rize installed successfully to $HOME/.local/bin/rize${NC}"
         echo ""
 
-        # Check if image exists, build if not
+        # Check if image exists, pull if not
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
-            echo -e "${YELLOW}Warning: The first-time build can take 15-30 minutes and requires ~5GB of space.${NC}"
-            echo -e "${BLUE}Building Docker image...${NC}"
-            "$HOME/.local/bin/rize" build
+            echo -e "${BLUE}Pulling pre-built Docker image from Docker Hub...${NC}"
+            if docker pull alienxp03/rize:latest; then
+                docker tag alienxp03/rize:latest rize:latest
+                echo -e "${GREEN}✓ Docker image pulled successfully${NC}"
+                echo ""
+            else
+                echo -e "${YELLOW}Warning: Failed to pull pre-built image. Building locally instead...${NC}"
+                echo -e "${YELLOW}Note: Local build can take 15-30 minutes and requires ~5GB of space.${NC}"
+                "$HOME/.local/bin/rize" build
+            fi
         else
-            echo -e "${GREEN}✓ Docker image already built${NC}"
+            echo -e "${GREEN}✓ Docker image already available${NC}"
             echo ""
         fi
 
         # Check if ~/.local/bin is in PATH
         if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
             echo -e "${YELLOW}Adding $HOME/.local/bin to PATH in ~/.bashrc and ~/.zshrc...${NC}"
-            
+
             PATH_LINE='export PATH="$HOME/.local/bin:$PATH"'
-            
+
             # Update .bashrc
             if [[ -f "$HOME/.bashrc" ]]; then
                 if ! grep -qxF "$PATH_LINE" "$HOME/.bashrc"; then
@@ -534,7 +549,7 @@ case "$COMMAND" in
                     echo -e "${GREEN}✓ Added to ~/.bashrc${NC}"
                 fi
             fi
-            
+
             # Update .zshrc
             if [[ -f "$HOME/.zshrc" ]]; then
                 if ! grep -qxF "$PATH_LINE" "$HOME/.zshrc"; then
@@ -542,7 +557,7 @@ case "$COMMAND" in
                     echo -e "${GREEN}✓ Added to ~/.zshrc${NC}"
                 fi
             fi
-            
+
             # Also export for current session
             export PATH="$HOME/.local/bin:$PATH"
         fi
@@ -556,116 +571,21 @@ case "$COMMAND" in
         echo ""
         ;;
 
-    build)
-        check_docker
-
-        # Parse build options
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --go=*)
-                    GO_VERSIONS="${1#--go=}"
-                    shift
-                    ;;
-                --ruby=*)
-                    RUBY_VERSIONS="${1#--ruby=}"
-                    shift
-                    ;;
-                --python=*)
-                    PYTHON_VERSIONS="${1#--python=}"
-                    shift
-                    ;;
-                --node=*)
-                    NODE_VERSIONS="${1#--node=}"
-                    shift
-                    ;;
-                --node-default=*)
-                    NODE_DEFAULT="${1#--node-default=}"
-                    shift
-                    ;;
-                --claude-code=*)
-                    CLAUDE_CODE_VERSION="${1#--claude-code=}"
-                    shift
-                    ;;
-                --codex=*)
-                    CODEX_VERSION="${1#--codex=}"
-                    shift
-                    ;;
-                --help|-h)
-                    usage
-                    ;;
-                *)
-                    echo -e "${RED}Unknown option: $1${NC}"
-                    usage
-                    ;;
-            esac
-        done
-
-        # Use defaults if not specified
-        GO_VERSIONS="${GO_VERSIONS:-$DEFAULT_GO_VERSIONS}"
-        RUBY_VERSIONS="${RUBY_VERSIONS:-$DEFAULT_RUBY_VERSIONS}"
-        PYTHON_VERSIONS="${PYTHON_VERSIONS:-$DEFAULT_PYTHON_VERSIONS}"
-        NODE_VERSIONS="${NODE_VERSIONS:-$DEFAULT_NODE_VERSIONS}"
-        NODE_DEFAULT="${NODE_DEFAULT:-$DEFAULT_NODE_DEFAULT}"
-        CLAUDE_CODE_VERSION="${CLAUDE_CODE_VERSION:-$DEFAULT_CLAUDE_CODE_VERSION}"
-        CODEX_VERSION="${CODEX_VERSION:-$DEFAULT_CODEX_VERSION}"
-
-        echo -e "${CYAN}========================================${NC}"
-        echo -e "${CYAN}Building Rize Image${NC}"
-        echo -e "${CYAN}========================================${NC}"
-        echo ""
-        echo -e "${BLUE}Versions:${NC}"
-        echo "  Go:       $GO_VERSIONS"
-        echo "  Ruby:     $RUBY_VERSIONS"
-        echo "  Python:   $PYTHON_VERSIONS"
-        echo "  Node:     $NODE_VERSIONS"
-        echo "  Node default: $NODE_DEFAULT"
-        echo "  Claude:   $CLAUDE_CODE_VERSION"
-        echo "  Codex:    $CODEX_VERSION"
-        echo ""
-        echo -e "${YELLOW}Note: This build can take 15-30 minutes and requires ~5GB of disk space.${NC}"
-        echo ""
-
-        # Create temporary directory for Dockerfile
-        TEMP_DIR=$(mktemp -d)
-        trap "rm -rf $TEMP_DIR" EXIT
-
-        # Write Dockerfile to temp directory
-        echo "$DOCKERFILE_CONTENT" > "$TEMP_DIR/Dockerfile"
-
-        # Build the Docker image with build args
-        docker build \
-            -t rize:latest \
-            --build-arg "GO_VERSIONS=$GO_VERSIONS" \
-            --build-arg "RUBY_VERSIONS=$RUBY_VERSIONS" \
-            --build-arg "PYTHON_VERSIONS=$PYTHON_VERSIONS" \
-            --build-arg "NODE_VERSIONS=$NODE_VERSIONS" \
-            --build-arg "NODE_DEFAULT=$NODE_DEFAULT" \
-            --build-arg "CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION" \
-            --build-arg "CODEX_VERSION=$CODEX_VERSION" \
-            "$TEMP_DIR"
-
-        echo ""
-        echo -e "${GREEN}✓ Docker image built successfully!${NC}"
-        echo ""
-        echo -e "${YELLOW}Next steps:${NC}"
-        echo "  # Start interactive shell"
-        echo -e "  ${BLUE}rize shell${NC}"
-        echo ""
-        echo "  # Run a command"
-        echo -e "  ${BLUE}rize run claude .${NC}"
-        echo ""
-        echo "  # Check versions"
-        echo -e "  ${BLUE}rize exec go version${NC}"
-        echo ""
-        ;;
 
     shell)
         check_docker
 
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
-            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "rize" build
+            echo -e "${BLUE}Pulling pre-built Docker image...${NC}"
+            if docker pull alienxp03/rize:latest; then
+                docker tag alienxp03/rize:latest rize:latest
+            else
+                echo -e "${RED}Failed to pull pre-built image.${NC}"
+                echo -e "${YELLOW}Please ensure you have internet connectivity and Docker is working.${NC}"
+                echo -e "${YELLOW}If you're a maintainer, use 'make build' to build locally.${NC}"
+                exit 1
+            fi
         fi
 
         echo -e "${BLUE}Starting interactive shell...${NC}"
@@ -681,8 +601,15 @@ case "$COMMAND" in
 
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
-            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "rize" build
+            echo -e "${BLUE}Pulling pre-built Docker image...${NC}"
+            if docker pull alienxp03/rize:latest; then
+                docker tag alienxp03/rize:latest rize:latest
+            else
+                echo -e "${RED}Failed to pull pre-built image.${NC}"
+                echo -e "${YELLOW}Please ensure you have internet connectivity and Docker is working.${NC}"
+                echo -e "${YELLOW}If you're a maintainer, use 'make build' to build locally.${NC}"
+                exit 1
+            fi
         fi
 
         parse_mount_args "$@"
@@ -696,8 +623,15 @@ case "$COMMAND" in
 
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
-            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "rize" build
+            echo -e "${BLUE}Pulling pre-built Docker image...${NC}"
+            if docker pull alienxp03/rize:latest; then
+                docker tag alienxp03/rize:latest rize:latest
+            else
+                echo -e "${RED}Failed to pull pre-built image.${NC}"
+                echo -e "${YELLOW}Please ensure you have internet connectivity and Docker is working.${NC}"
+                echo -e "${YELLOW}If you're a maintainer, use 'make build' to build locally.${NC}"
+                exit 1
+            fi
         fi
 
         parse_mount_args "$@"
@@ -710,8 +644,15 @@ case "$COMMAND" in
 
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
-            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "rize" build
+            echo -e "${BLUE}Pulling pre-built Docker image...${NC}"
+            if docker pull alienxp03/rize:latest; then
+                docker tag alienxp03/rize:latest rize:latest
+            else
+                echo -e "${RED}Failed to pull pre-built image.${NC}"
+                echo -e "${YELLOW}Please ensure you have internet connectivity and Docker is working.${NC}"
+                echo -e "${YELLOW}If you're a maintainer, use 'make build' to build locally.${NC}"
+                exit 1
+            fi
         fi
 
         parse_mount_args "$@"
@@ -725,8 +666,15 @@ case "$COMMAND" in
 
         # Check if image exists
         if ! docker image inspect rize:latest > /dev/null 2>&1; then
-            echo -e "${YELLOW}Image not found. Building with default versions...${NC}"
-            "rize" build
+            echo -e "${BLUE}Pulling pre-built Docker image...${NC}"
+            if docker pull alienxp03/rize:latest; then
+                docker tag alienxp03/rize:latest rize:latest
+            else
+                echo -e "${RED}Failed to pull pre-built image.${NC}"
+                echo -e "${YELLOW}Please ensure you have internet connectivity and Docker is working.${NC}"
+                echo -e "${YELLOW}If you're a maintainer, use 'make build' to build locally.${NC}"
+                exit 1
+            fi
         fi
 
         parse_mount_args "$@"
