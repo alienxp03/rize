@@ -80,6 +80,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreadline-dev \
     libyaml-dev \
     libpq-dev \
+    sudo \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -92,7 +93,8 @@ RUN if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi && \
     useradd -m -u 1000 -s /bin/bash agent && \
     mkdir -p /home/agent/workspace /home/agent/.claude-config /home/agent/.local && \
     chown -R agent:agent /home/agent && \
-    chmod 755 /home/agent
+    chmod 755 /home/agent && \
+    echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
 # Install zsh with powerline10k theme (from Claude Code's devcontainer)
 ARG ZSH_IN_DOCKER_VERSION=1.2.1
@@ -117,7 +119,8 @@ RUN curl https://mise.run | sh && \
 RUN chown -R agent:agent /home/agent
 
 # Create entrypoint script that initializes mise and handles commands
-RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\ncd /home/agent/workspace\nif [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' > /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\n# Fix workspace permissions if mounted by root\nif [ "$(stat -c %%u /home/agent/workspace)" != "$(id -u agent)" ]; then\n  sudo chown agent:agent /home/agent/workspace\nfi\ncd /home/agent/workspace\n' > /usr/local/bin/docker-entrypoint.sh && \
+    printf 'if [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n    export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' >> /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Install Homebrew in standard location for binary support
 RUN mkdir -p /home/linuxbrew/.linuxbrew && \
