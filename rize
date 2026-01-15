@@ -331,6 +331,27 @@ build_docker_run_flags() {
         flags+=("-v" "$HOME/.netrc:/home/agent/.netrc:ro")
     fi
 
+    # Add .gitconfig mount if it exists (read-only for safety)
+    if [[ -f "$HOME/.gitconfig" ]]; then
+        flags+=("-v" "$HOME/.gitconfig:/home/agent/.gitconfig:ro")
+    fi
+
+    # Add SSH Agent forwarding
+    # We skip if the socket is not set or file doesn't exist
+    if [[ -n "$SSH_AUTH_SOCK" ]]; then
+        # For macOS, Docker Desktop handles the magic, but we need to ensure we mount the right thing.
+        # Use the magic path for Docker Desktop on Mac if typical socket location is problematic?
+        # Actually, let's try direct mount first, it's most standard.
+        # But we verify it's a socket or file
+        if [[ -S "$SSH_AUTH_SOCK" ]]; then
+             flags+=("-v" "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" "-e" "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
+        elif [[ "$OSTYPE" == "darwin"* ]]; then
+             # Fallback for Mac if the socket path is dynamic or special
+             # Assuming standard agent usage
+             :
+        fi
+    fi
+
     # Add extra mounts
     flags+=("${EXTRA_MOUNT_FLAGS[@]}")
 
