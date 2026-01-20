@@ -177,12 +177,20 @@ cmd_install() {
     fi
 
     if [ -w "$install_dir" ]; then
-        cp "$src" "$install_path"
-        chmod +x "$install_path"
+        if command -v install >/dev/null 2>&1; then
+            install -m 755 "$src" "$install_path"
+        else
+            cp "$src" "$install_path"
+            chmod 755 "$install_path"
+        fi
     elif command -v sudo >/dev/null 2>&1; then
         echo -e "${YELLOW}Installing to $install_path requires elevated permissions; sudo may prompt for your password.${NC}"
-        sudo cp "$src" "$install_path"
-        sudo chmod +x "$install_path"
+        if command -v install >/dev/null 2>&1; then
+            sudo install -m 755 "$src" "$install_path"
+        else
+            sudo cp "$src" "$install_path"
+            sudo chmod 755 "$install_path"
+        fi
     else
         echo -e "${RED}Error: $install_dir is not writable and sudo is not available.${NC}"
         exit 1
