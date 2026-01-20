@@ -12,11 +12,15 @@ help:
 	@echo "  make exec <cmd...>      Run a command via rize exec"
 	@echo ""
 
-build:
+build-local:
 	@echo "Building Docker image $(IMAGE_NAME)..."
 	docker build -t $(IMAGE_NAME) .
-	# @echo "Pushing to Docker Hub..."
-	# docker push $(IMAGE_NAME)
+
+build-push:
+	@echo "Building Docker image $(IMAGE_NAME)..."
+	docker build -t $(IMAGE_NAME) .
+	@echo "Pushing to Docker Hub..."
+	docker push $(IMAGE_NAME)
 
 install:
 	@./rize install
