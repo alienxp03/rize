@@ -14,6 +14,19 @@ if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 fi
 
+# Start bundled services by default if available.
+if command -v service >/dev/null 2>&1; then
+    $SUDO service postgresql start >/dev/null 2>&1 || true
+    $SUDO service redis-server start >/dev/null 2>&1 || true
+else
+    if command -v pg_ctlcluster >/dev/null 2>&1; then
+        $SUDO pg_ctlcluster 18 main start >/dev/null 2>&1 || true
+    fi
+    if command -v redis-server >/dev/null 2>&1; then
+        $SUDO redis-server --daemonize yes >/dev/null 2>&1 || true
+    fi
+fi
+
 # Check if we need to adjust the user's UID/GID
 if [ "$(id -u $USERNAME)" != "$HOST_UID" ] || [ "$(id -g $USERNAME)" != "$HOST_GID" ]; then
     # echo "Updating UID/GID to $HOST_UID:$HOST_GID..."
@@ -84,12 +97,77 @@ else
             set +a
         fi
 
-        # Source .rize/env if it exists
-        if [ -f /home/agent/.rize/env ]; then
-            set -a
-            source /home/agent/.rize/env
-            set +a
-        fi
+        # Load environment variables from ~/.rize/config.yml (environment section)
+        load_rize_environment() {
+            local config_path=""
+            if [ -n "${RIZE_CONFIG_PATH:-}" ] && [ -f "$RIZE_CONFIG_PATH" ]; then
+                config_path="$RIZE_CONFIG_PATH"
+            elif [ -f /home/agent/.rize/config.yml ]; then
+                config_path="/home/agent/.rize/config.yml"
+            elif [ -f /home/agent/.local/share/rize/config.yml ]; then
+                config_path="/home/agent/.local/share/rize/config.yml"
+            else
+                return 0
+            fi
+
+            local in_env=0
+            local line trimmed item key val
+            local sq
+            sq=$(printf "%b" "\\047")
+            while IFS= read -r line || [ -n "$line" ]; do
+                trimmed="${line#"${line%%[![:space:]]*}"}"
+
+                if [ -z "$trimmed" ] || [[ "$trimmed" == \#* ]]; then
+                    continue
+                fi
+
+                if [ "$in_env" -eq 0 ]; then
+                    if [[ "$trimmed" == "environment:"* ]]; then
+                        in_env=1
+                    fi
+                    continue
+                fi
+
+                if [[ "$line" != [[:space:]]* ]]; then
+                    in_env=0
+                    continue
+                fi
+
+                item="$trimmed"
+                if [[ "$item" == "-"* ]]; then
+                    item="${item#-}"
+                    item="${item#"${item%%[![:space:]]*}"}"
+                    if [[ "$item" != *"="* ]]; then
+                        continue
+                    fi
+                    key="${item%%=*}"
+                    val="${item#*=}"
+                else
+                    if [[ "$item" != *":"* ]]; then
+                        continue
+                    fi
+                    key="${item%%:*}"
+                    val="${item#*:}"
+                fi
+
+                key="$(printf "%s" "$key" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
+                val="$(printf "%s" "$val" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
+
+                if [ -n "$val" ]; then
+                    if [[ "${val:0:1}" == "\"" && "${val: -1}" == "\"" ]]; then
+                        val="${val:1:${#val}-2}"
+                    elif [[ "${val:0:1}" == "$sq" && "${val: -1}" == "$sq" ]]; then
+                        val="${val:1:${#val}-2}"
+                    fi
+                fi
+
+                if [ -n "$key" ]; then
+                    export "$key=$val"
+                fi
+            done < "$config_path"
+        }
+
+        load_rize_environment
 
         # Activate mise
         if [ -f "$WORKSPACE_DIR/.config/mise/config.toml" ]; then
@@ -120,12 +198,77 @@ else
             set +a
         fi
 
-        # Source .rize/env if it exists
-        if [ -f /home/agent/.rize/env ]; then
-            set -a
-            source /home/agent/.rize/env
-            set +a
-        fi
+        # Load environment variables from ~/.rize/config.yml (environment section)
+        load_rize_environment() {
+            local config_path=""
+            if [ -n "${RIZE_CONFIG_PATH:-}" ] && [ -f "$RIZE_CONFIG_PATH" ]; then
+                config_path="$RIZE_CONFIG_PATH"
+            elif [ -f /home/agent/.rize/config.yml ]; then
+                config_path="/home/agent/.rize/config.yml"
+            elif [ -f /home/agent/.local/share/rize/config.yml ]; then
+                config_path="/home/agent/.local/share/rize/config.yml"
+            else
+                return 0
+            fi
+
+            local in_env=0
+            local line trimmed item key val
+            local sq
+            sq=$(printf "%b" "\\047")
+            while IFS= read -r line || [ -n "$line" ]; do
+                trimmed="${line#"${line%%[![:space:]]*}"}"
+
+                if [ -z "$trimmed" ] || [[ "$trimmed" == \#* ]]; then
+                    continue
+                fi
+
+                if [ "$in_env" -eq 0 ]; then
+                    if [[ "$trimmed" == "environment:"* ]]; then
+                        in_env=1
+                    fi
+                    continue
+                fi
+
+                if [[ "$line" != [[:space:]]* ]]; then
+                    in_env=0
+                    continue
+                fi
+
+                item="$trimmed"
+                if [[ "$item" == "-"* ]]; then
+                    item="${item#-}"
+                    item="${item#"${item%%[![:space:]]*}"}"
+                    if [[ "$item" != *"="* ]]; then
+                        continue
+                    fi
+                    key="${item%%=*}"
+                    val="${item#*=}"
+                else
+                    if [[ "$item" != *":"* ]]; then
+                        continue
+                    fi
+                    key="${item%%:*}"
+                    val="${item#*:}"
+                fi
+
+                key="$(printf "%s" "$key" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
+                val="$(printf "%s" "$val" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//")"
+
+                if [ -n "$val" ]; then
+                    if [[ "${val:0:1}" == "\"" && "${val: -1}" == "\"" ]]; then
+                        val="${val:1:${#val}-2}"
+                    elif [[ "${val:0:1}" == "$sq" && "${val: -1}" == "$sq" ]]; then
+                        val="${val:1:${#val}-2}"
+                    fi
+                fi
+
+                if [ -n "$key" ]; then
+                    export "$key=$val"
+                fi
+            done < "$config_path"
+        }
+
+        load_rize_environment
 
         # Activate mise
         if [ -f "$WORKSPACE_DIR/.config/mise/config.toml" ]; then

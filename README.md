@@ -18,22 +18,22 @@ This command installs the `rize` CLI to `/usr/local/bin` and pulls the pre-built
 
 ### AI Coding Agents
 
-| Agent | Command | Description |
-|-------|---------|-------------|
-| [Claude Code](https://github.com/anthropics/claude-code) | `rize claude` | Anthropic's AI coding assistant |
-| [Codex](https://github.com/openai/codex) | `rize codex` | OpenAI's code generation agent |
-| [OpenCode](https://github.com/opencode-ai/opencode) | `rize opencode` | Multi-model AI coding tool |
-| Gemini | `rize gemini` | Google's Gemini (via OpenCode) |
+| Agent                                                    | Command         | Description                     |
+| -------------------------------------------------------- | --------------- | ------------------------------- |
+| [Claude Code](https://github.com/anthropics/claude-code) | `rize claude`   | Anthropic's AI coding assistant |
+| [Codex](https://github.com/openai/codex)                 | `rize codex`    | OpenAI's code generation agent  |
+| [OpenCode](https://github.com/opencode-ai/opencode)      | `rize opencode` | Multi-model AI coding tool      |
+| Gemini                                                   | `rize gemini`   | Google's Gemini (via OpenCode)  |
 
 ### Language Runtimes (via [mise](https://mise.jdx.dev))
 
 | Language | Version |
-|----------|---------|
-| Node.js | 24 |
-| Python | 3.12 |
-| Ruby | 3.4 |
-| Go | 1.25 |
-| Rust | 1.92 |
+| -------- | ------- |
+| Node.js  | 24      |
+| Python   | 3.12    |
+| Ruby     | 3.4     |
+| Go       | 1.25    |
+| Rust     | 1.92    |
 
 ### Package Managers & Build Tools
 
@@ -45,16 +45,16 @@ This command installs the `rize` CLI to `/usr/local/bin` and pulls the pre-built
 
 ### Developer Tools
 
-| Category | Tools |
-|----------|-------|
-| Shell | zsh + Oh My Zsh + Powerlevel10k |
-| Editors | vim, nano |
-| Search | ripgrep (`rg`), fd, jq |
-| Git | git, git-lfs |
-| Databases | PostgreSQL 18 (client + server), Redis 8, SQLite3 |
-| Network | curl, wget, ping, dig, netstat |
-| Utils | htop, lsof, less, tar, zip, rsync |
-| Package Manager | Homebrew (full image only) |
+| Category        | Tools                                             |
+| --------------- | ------------------------------------------------- |
+| Shell           | zsh + Oh My Zsh + Powerlevel10k                   |
+| Editors         | vim, nano                                         |
+| Search          | ripgrep (`rg`), fd, jq                            |
+| Git             | git, git-lfs                                      |
+| Databases       | PostgreSQL 18 (client + server), Redis 8, SQLite3 |
+| Network         | curl, wget, ping, dig, netstat                    |
+| Utils           | htop, lsof, less, tar, zip, rsync                 |
+| Package Manager | Homebrew (full image only)                        |
 
 ### Code Quality Tools
 
@@ -108,20 +108,14 @@ rize shell
 
 ### API Keys
 
-Create `~/.env` or `~/.rize/env` on your host:
+Create `~/.env` or `~/.rize/config.yml` on your host:
 
-```bash
-# AI Agent API Keys
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-
-# Optional: Language-specific config
-GOPROXY=https://proxy.company.com,direct
-GOPRIVATE=gitlab.company.com/*
+```yaml
+environment:
+  ZAI_API_KEY: zai-...
 ```
 
-These files are automatically loaded when the container starts.
+These files are automatically loaded when the container starts. If you prefer `~/.env`, keep using simple `KEY=VALUE` lines.
 
 ### Git & SSH
 
@@ -134,11 +128,11 @@ The following are auto-mounted from your host (read-only):
 
 ### Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `RIZE_IMAGE` | Override Docker image (e.g., `alienxp03/rize:2026-01-15`) |
-| `RIZE_GEMINI_MODEL` | Gemini model for `rize gemini` (default: `gemini-pro`) |
-| `RIZE_WORKSPACE_UNIQUE` | Set to `1` to add path hash to workspace dir |
+| Variable                | Description                                               |
+| ----------------------- | --------------------------------------------------------- |
+| `RIZE_IMAGE`            | Override Docker image (e.g., `alienxp03/rize:2026-01-15`) |
+| `RIZE_GEMINI_MODEL`     | Gemini model for `rize gemini` (default: `gemini-pro`)    |
+| `RIZE_WORKSPACE_UNIQUE` | Set to `1` to add path hash to workspace dir              |
 
 ---
 
@@ -155,11 +149,11 @@ Your current directory is mounted to `/workspace/<project-name>`:
 
 ### Persistent Data
 
-| Data | Location |
-|------|----------|
-| Shell history | `~/.rize/zsh_history` |
-| Agent configs | Docker volume `rize-agents` |
-| Claude settings | Shared from `~/.claude/` |
+| Data            | Location                    |
+| --------------- | --------------------------- |
+| Shell history   | `~/.rize/zsh_history`       |
+| Agent configs   | Docker volume `rize-agents` |
+| Claude settings | Shared from `~/.claude/`    |
 
 ### Docker Socket
 

@@ -110,12 +110,6 @@ build_flags() {
     # We mount the whole directory to avoid file-mount rename issues with zsh history
     flags+=("-v" "$HOME/.rize:$CONTAINER_HOME/.local/share/rize")
 
-    # .rize/env (Read-Only) - Environment variables
-    if [ -f "$HOME/.rize/env" ]; then
-        flags+=("-v" "$HOME/.rize/env:$CONTAINER_HOME/.rize/env:ro")
-        flags+=("--env-file" "$HOME/.rize/env")
-    fi
-
     printf "%s\n" "${flags[@]}"
 }
 
@@ -186,6 +180,7 @@ cmd_install() {
         cp "$src" "$install_path"
         chmod +x "$install_path"
     elif command -v sudo >/dev/null 2>&1; then
+        echo -e "${YELLOW}Installing to $install_path requires elevated permissions; sudo may prompt for your password.${NC}"
         sudo cp "$src" "$install_path"
         sudo chmod +x "$install_path"
     else
