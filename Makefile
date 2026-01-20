@@ -8,7 +8,7 @@ help:
 	@echo ""
 	@echo "  make build              Build the Docker image (for maintainers)"
 	@echo "  make push               Push the Docker image to Docker Hub"
-	@echo "  make install            Install rize to ~/.local/bin/"
+	@echo "  make install            Install rize to /usr/local/bin"
 	@echo "  make exec <cmd...>      Run a command via rize exec"
 	@echo ""
 

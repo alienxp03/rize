@@ -155,14 +155,48 @@ cmd_exec() {
 }
 
 cmd_install() {
-    local install_path="$HOME/.local/bin/rize"
-    mkdir -p "$(dirname "$install_path")"
-    cp "$0" "$install_path"
-    chmod +x "$install_path"
+    local install_path="/usr/local/bin/rize"
+    local install_dir
+    install_dir="$(dirname "$install_path")"
+    local src="${RIZE_INSTALL_SRC:-}"
+    local tmp_src=""
+
+    if [ -z "$src" ]; then
+        if [ -f "$0" ] && [ "$(basename "$0")" = "rize" ]; then
+            src="$0"
+        else
+            src="https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize"
+        fi
+    fi
+
+    if [[ "$src" == http://* || "$src" == https://* ]]; then
+        tmp_src="$(mktemp)"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL "$src" -o "$tmp_src"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$tmp_src" "$src"
+        else
+            echo -e "${RED}Error: curl or wget is required to download $src.${NC}"
+            exit 1
+        fi
+        src="$tmp_src"
+    fi
+
+    if [ -w "$install_dir" ]; then
+        cp "$src" "$install_path"
+        chmod +x "$install_path"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo cp "$src" "$install_path"
+        sudo chmod +x "$install_path"
+    else
+        echo -e "${RED}Error: $install_dir is not writable and sudo is not available.${NC}"
+        exit 1
+    fi
+
     echo -e "${GREEN}Installed rize to $install_path${NC}"
 
-    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        echo -e "${YELLOW}Warning: $HOME/.local/bin is not in your PATH.${NC}"
+    if [ -n "$tmp_src" ]; then
+        rm -f "$tmp_src"
     fi
 }
 
@@ -178,13 +212,21 @@ cmd_help() {
     echo "  opencode    Run OpenCode agent"
     echo "  gemini      Run Gemini agent (via opencode)"
     echo "  exec        Run a shell command directly"
-    echo "  install     Install rize to ~/.local/bin"
+    echo "  install     Install rize to /usr/local/bin"
     echo "  help        Show this help"
 }
 
 # Main Dispatch
-COMMAND="$1"
-shift || COMMAND="help"
+COMMAND="${1:-}"
+if [ -z "$COMMAND" ]; then
+    if [ -t 0 ]; then
+        COMMAND="help"
+    else
+        COMMAND="install"
+    fi
+else
+    shift
+fi
 
 case "$COMMAND" in
     shell)

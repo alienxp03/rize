@@ -8,7 +8,7 @@ Containerized development environment for AI coding agents. Pre-configured with 
 curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize | bash
 ```
 
-This installs the `rize` CLI to `~/.local/bin/` and pulls the pre-built Docker image (~5GB).
+This command installs the `rize` CLI to `/usr/local/bin` and pulls the pre-built Docker image (~5GB).
 
 **Requirements:** Docker
 
@@ -191,7 +191,7 @@ Minimal image with runtimes only. No Homebrew or database servers.
 
 ```bash
 # Remove CLI
-rm -f ~/.local/bin/rize
+rm -f /usr/local/bin/rize
 
 # Remove Docker resources
 docker image rm alienxp03/rize:latest
