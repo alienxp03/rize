@@ -74,11 +74,8 @@ RUN --mount=type=cache,target=/var/cache/apt \
         > /etc/apt/preferences.d/redis \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-    # Database clients (pinned majors)
+    # Database clients only (no servers - use docker compose)
     postgresql-client-18 \
-    # Database servers (pinned majors)
-    postgresql-18 \
-    redis-server \
     redis-tools \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && if [ -x /usr/bin/batcat ]; then ln -sf /usr/bin/batcat /usr/local/bin/bat; fi \
