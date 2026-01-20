@@ -55,6 +55,32 @@ if [ ! -d "$WORKSPACE_DIR" ]; then
     $SUDO chown "$USERNAME:$USERNAME" "$WORKSPACE_DIR"
 fi
 
+# Install mitmproxy CA certificate if proxy is configured
+if [ -n "${HTTP_PROXY:-}" ] && [[ "${HTTP_PROXY}" == *"mitmproxy"* ]]; then
+    # Extract proxy host from HTTP_PROXY (e.g., http://mitmproxy:8080 -> mitmproxy:8080)
+    PROXY_HOST="${HTTP_PROXY#http://}"
+    PROXY_HOST="${PROXY_HOST#https://}"
+
+    # Wait for mitmproxy to be ready (max 10 seconds)
+    for i in {1..10}; do
+        if curl -s --proxy "$HTTP_PROXY" http://mitm.it/ >/dev/null 2>&1; then
+            # Download and install mitmproxy CA certificate
+            if curl -s --proxy "$HTTP_PROXY" -o /tmp/mitmproxy-ca-cert.pem http://mitm.it/cert/pem 2>/dev/null; then
+                $SUDO cp /tmp/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy-ca-cert.crt
+                $SUDO update-ca-certificates >/dev/null 2>&1 || true
+                rm -f /tmp/mitmproxy-ca-cert.pem
+                # Also install for Python requests
+                if [ -d /home/agent/.local/lib ]; then
+                    export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+                    export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+                fi
+                break
+            fi
+        fi
+        sleep 1
+    done
+fi
+
 # Switch to the user for the remaining commands
 if [ "$1" = "exec_as_root" ]; then
     shift
@@ -78,6 +104,8 @@ else
         exec sudo -E -H -u "$USERNAME" bash -lc '
         export PATH="/home/agent/.local/bin:$PATH"
         export MISE_TRUSTED_CONFIG=1
+        export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+        export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
         if [ -f /home/agent/.env ]; then
             set -a
             source /home/agent/.env
@@ -179,6 +207,8 @@ else
         exec bash -lc '
         export PATH="/home/agent/.local/bin:$PATH"
         export MISE_TRUSTED_CONFIG=1
+        export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+        export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
         if [ -f /home/agent/.env ]; then
             set -a
             source /home/agent/.env

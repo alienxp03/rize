@@ -47,6 +47,7 @@ services:
   # mitmproxy - Network traffic logging and inspection
   # Web UI available at http://localhost:8081
   # Automatically sets HTTP_PROXY and HTTPS_PROXY in the container
+  # HTTPS interception is configured automatically (CA cert installed at startup)
   mitmproxy:
     enabled: true
     image: "mitmproxy/mitmproxy:latest"
