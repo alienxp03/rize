@@ -33,6 +33,15 @@ func ServicesUp() error {
 
 // ServicesDown stops all services
 func ServicesDown() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if err := docker.EnsureCompose(cfg); err != nil {
+		return err
+	}
+
 	ui.Info("Stopping services...")
 
 	if err := docker.ComposeDown(); err != nil {
@@ -45,16 +54,43 @@ func ServicesDown() error {
 
 // ServicesPs lists running services
 func ServicesPs() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if err := docker.EnsureCompose(cfg); err != nil {
+		return err
+	}
+
 	return docker.ComposePs()
 }
 
 // ServicesLogs shows service logs
 func ServicesLogs(follow bool) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if err := docker.EnsureCompose(cfg); err != nil {
+		return err
+	}
+
 	return docker.ComposeLogs(follow)
 }
 
 // ServicesRestart restarts services
 func ServicesRestart() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if err := docker.EnsureCompose(cfg); err != nil {
+		return err
+	}
+
 	ui.Info("Restarting services...")
 
 	if err := docker.ComposeRestart(); err != nil {
