@@ -1,216 +1,262 @@
 # =============================================================================
-# Stage 1: Base - System dependencies, user setup, mise, zsh
-# This stage rarely changes and provides the foundation
+# Stage 1: Base - System dependencies and user setup
 # =============================================================================
 FROM ubuntu:24.04 AS base
 
-# Build-time arguments (set via --build-arg, no defaults here)
-ARG GO_VERSIONS
-ARG NODE_VERSIONS
-ARG RUBY_VERSIONS
-ARG PYTHON_VERSIONS
-ARG NODE_DEFAULT
-ARG CLAUDE_CODE_VERSION
-ARG CODEX_VERSION
-
-# Non-interactive setup
+# Prevent interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive \
-    PATH="/home/agent/.linuxbrew/bin:/home/agent/.linuxbrew/sbin:/home/agent/.local/bin:/home/agent/.local/go/bin:/home/agent/.local/share/mise/shims:$PATH" \
-    HOME=/home/agent \
-    USER=agent \
-    IS_SANDBOX=1 \
-    SHELL=/bin/zsh \
-    EDITOR=vim \
     LANG=en_US.UTF-8 \
-    LC_ALL=en_US.UTF-8 \
-    ZSH_DISABLE_COMPFIX=true
+    LC_ALL=en_US.UTF-8
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    vim \
-    nano \
-    less \
-    build-essential \
-    git \
-    git-lfs \
+# Install base dependencies
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends \
+    zsh \
+    bash \
     curl \
     wget \
-    httpie \
-    locales \
-    ca-certificates \
-    bash \
-    zsh \
-    ripgrep \
-    fd-find \
-    bat \
+    git \
+    git-lfs \
+    vim \
+    nano \
     jq \
+    ca-certificates \
+    locales \
+    sudo \
     unzip \
-    fzf \
-    yq \
-    tree \
-    dnsutils \
-    gh \
-    glab \
-    sqlite3 \
-    postgresql-client \
-    redis-tools \
-    mysql-client \
     zip \
     tar \
     rsync \
+    less \
     htop \
     lsof \
-    file \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-virtualenv \
-    pipx \
-    cargo \
-    libssl-dev \
-    zlib1g-dev \
-    libreadline-dev \
-    libyaml-dev \
-    libpq-dev \
-    sudo \
+    net-tools \
+    iputils-ping \
+    dnsutils \
+    tzdata \
+    gnupg \
+    lsb-release \
+    # Runtime libs for language runtimes
+    libssl3 \
+    zlib1g \
+    libyaml-0-2 \
+    libreadline8 \
+    libncurses6 \
+    libffi8 \
+    libgdbm6 \
+    # Tools requested
+    ripgrep \
+    fd-find \
+    bat \
+    # Database clients (lightweight versions)
+    sqlite3 \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && curl -fsSL https://packages.redis.io/gpg \
+        | gpg --dearmor -o /usr/share/keyrings/redis-archive-keyring.gpg \
+    && chmod 644 /usr/share/keyrings/redis-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/redis.list \
+    && printf '%s\n' \
+        'Package: postgresql-client-18' \
+        'Pin: release o=apt.postgresql.org' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/pgdg \
+    && printf '%s\n' \
+        'Package: redis-server redis-tools' \
+        'Pin: version 6:8.*' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/redis \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    # Database clients (pinned majors)
+    postgresql-client-18 \
+    # Database servers (pinned majors)
+    postgresql-18 \
+    redis-server \
+    redis-tools \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
-    && apt-get clean \
+    && if [ -x /usr/bin/batcat ]; then ln -sf /usr/bin/batcat /usr/local/bin/bat; fi \
     && rm -rf /var/lib/apt/lists/*
 
-# Generate UTF-8 locale
-RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+# Generate Locale
+RUN locale-gen en_US.UTF-8
 
-# Create non-root user with home directory
-RUN if id ubuntu >/dev/null 2>&1; then userdel -r ubuntu; fi && \
-    useradd -m -u 1000 -s /bin/bash agent && \
-    mkdir -p /home/agent/workspace /home/agent/.claude-config /home/agent/.local && \
-    chown -R agent:agent /home/agent && \
-    chmod 755 /home/agent && \
+# Create Agent User
+RUN userdel -r ubuntu && \
+    useradd -m -s /bin/zsh -u 1000 agent && \
     echo "agent ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-# Install zsh with powerline10k theme (from Claude Code's devcontainer)
-ARG ZSH_IN_DOCKER_VERSION=1.2.1
-RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v${ZSH_IN_DOCKER_VERSION}/zsh-in-docker.sh)" -- \
-  -x -u agent
+# Set Claude + Codex config dirs
+ENV CLAUDE_CONFIG_DIR=/home/agent/.agents/claude \
+    CODEX_HOME=/home/agent/.agents/codex
+RUN mkdir -p /home/agent/.agents/claude /home/agent/.agents/codex && \
+    chown -R agent:agent /home/agent/.agents
 
-# Fix oh-my-zsh directory permissions (remove group/other write)
-RUN find /home/agent/.oh-my-zsh -type d -exec chmod go-w {} \; 2>/dev/null || true
-
-# Disable git status in powerlevel10k
-RUN printf 'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true\n' >> /home/agent/.zshrc
-
-# Add fzf configuration to zshrc if fzf is available
-RUN if [ -f /usr/share/doc/fzf/examples/key-bindings.zsh ]; then \
-      echo "# FZF configuration" >> /home/agent/.zshrc && \
-      echo "source /usr/share/doc/fzf/examples/key-bindings.zsh" >> /home/agent/.zshrc && \
-      echo "source /usr/share/doc/fzf/examples/completion.zsh" >> /home/agent/.zshrc; \
-    fi
-
-# Install mise using official installer
-RUN curl https://mise.run | sh && \
-    mv /home/agent/.local/bin/mise /usr/local/bin/mise
-
-# Final home ownership fix before switching users
-RUN chown -R agent:agent /home/agent
-
-# Install Homebrew in standard location for binary support
-RUN mkdir -p /home/linuxbrew/.linuxbrew && \
-    chown -R agent:agent /home/linuxbrew && \
-    chmod -R 755 /home/linuxbrew
-
-# Switch to agent user for subsequent installations
+# Install Powerlevel10k & Zsh plugins
 USER agent
+RUN sh -c "$(wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.2.1/zsh-in-docker.sh)" -- \
+    -t powerlevel10k \
+    -p git \
+    -p history \
+    -p https://github.com/zsh-users/zsh-autosuggestions \
+    -p https://github.com/zsh-users/zsh-syntax-highlighting
 
-# Install Homebrew as agent (non-interactive)
-RUN git clone https://github.com/Homebrew/brew /home/linuxbrew/.linuxbrew/Homebrew && \
-    mkdir -p /home/linuxbrew/.linuxbrew/bin && \
-    ln -s ../Homebrew/bin/brew /home/linuxbrew/.linuxbrew/bin/brew && \
-    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && \
-    brew update --force --quiet && \
-    cat <<'BREWRC' >> ~/.zshrc
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-BREWRC
-RUN cat <<'BREWRC' >> ~/.bashrc
-eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
-BREWRC
+# Copy default p10k configuration to avoid the configuration wizard on first run
+RUN if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; then \
+        git clone --depth=1 https://github.com/romkatv/powerlevel10k.git ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k; \
+    fi && \
+    cp ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k/config/p10k-rainbow.zsh ~/.p10k.zsh && \
+    echo 'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true' >> ~/.p10k.zsh && \
+    echo 'POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true' >> ~/.zshrc
 
-# =============================================================================
-# Stage 2: Languages - Pre-install all language versions via mise
-# This stage caches language installations separately from tools
-# =============================================================================
-FROM base AS languages
+# Pre-download gitstatusd to avoid fetching it on startup
+RUN ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k/gitstatus/install
 
-# Initialize mise
-RUN mise --version
+# Fix: Set ZSH_THEME to point to the correct location inside the directory
+RUN sed -i 's/ZSH_THEME="powerlevel10k"/ZSH_THEME="powerlevel10k\/powerlevel10k"/' ~/.zshrc
 
-# Set global defaults for Ruby
-RUN /bin/bash -c 'cd /home/agent; RUBY_DEFAULT=$(echo "$RUBY_VERSIONS" | cut -d, -f1); echo "Setting Ruby default: ${RUBY_DEFAULT}"; mise use -g ruby@"$RUBY_DEFAULT"'
-
-# Pre-install all requested Ruby versions (done separately to avoid timeout)
-RUN /bin/bash -c 'IFS="," read -ra RUBY_LIST <<< "$RUBY_VERSIONS"; echo "Pre-installing Ruby versions: ${RUBY_LIST[*]}"; for v in "${RUBY_LIST[@]}"; do mise install ruby@"$v"; done'
-
-# Set global default for Python and pre-install versions
-RUN /bin/bash -c 'cd /home/agent; PYTHON_DEFAULT=$(echo "$PYTHON_VERSIONS" | cut -d, -f1); echo "Setting Python default: ${PYTHON_DEFAULT}"; mise use -g python@"$PYTHON_DEFAULT"'
-
-# Pre-install all requested Python versions (done separately to avoid timeout)
-RUN /bin/bash -c 'IFS="," read -ra PYTHON_LIST <<< "$PYTHON_VERSIONS"; echo "Pre-installing Python versions: ${PYTHON_LIST[*]}"; for v in "${PYTHON_LIST[@]}"; do mise install python@"$v"; done'
-
-# Set global default for Go and pre-install versions
-RUN /bin/bash -c 'cd /home/agent; GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1); echo "Setting Go default: ${GO_DEFAULT}"; mise use -g go@"$GO_DEFAULT"; IFS="," read -ra GO_LIST <<< "$GO_VERSIONS"; echo "Pre-installing Go versions: ${GO_LIST[*]}"; for v in "${GO_LIST[@]}"; do mise install go@"$v"; done'
-
-# Set global default for Node and pre-install versions
-RUN /bin/bash -c 'cd /home/agent; NODE_DEFAULT="${NODE_DEFAULT}"; echo "Setting Node default: ${NODE_DEFAULT}"; mise use -g node@"$NODE_DEFAULT"; echo "Pre-installing default Node version: ${NODE_DEFAULT}"; mise install node@"$NODE_DEFAULT"; IFS="," read -ra NODE_LIST <<< "$NODE_VERSIONS"; echo "Pre-installing Node versions: ${NODE_LIST[*]}"; for v in "${NODE_LIST[@]}"; do mise install node@"$v"; done'
+USER root
 
 # =============================================================================
-# Stage 3: Tools - Install development tools (npm packages, Go tools, etc.)
-# This stage caches tool installations separately from entrypoint changes
+# Stage 1b: Build dependencies (for language compilation)
+# =============================================================================
+FROM base AS build-deps
+
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libyaml-dev \
+    libreadline-dev \
+    libncurses-dev \
+    libffi-dev \
+    libgdbm-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# Stage 2: Languages - Mise and Runtime setup
+# =============================================================================
+FROM build-deps AS languages
+
+USER agent
+ENV HOME=/home/agent
+ENV PATH="/home/agent/.local/bin:/home/agent/.local/share/mise/shims:$PATH"
+
+# Install mise
+RUN curl https://mise.run | sh
+
+# Copy mise config and install runtimes from it
+COPY --chown=agent:agent .config/mise/config.toml /home/agent/.config/mise/config.toml
+RUN --mount=type=cache,target=/home/agent/.cache,uid=1000,gid=1000 \
+    MISE_TRUSTED_CONFIG=1 mise install
+
+# =============================================================================
+# Stage 3: Tools - AI Agents and CLI Tools
 # =============================================================================
 FROM languages AS tools
 
-# Install Claude Code and Codex using the default Node version
-RUN NODE_DEFAULT="${NODE_DEFAULT}" && \
-    cd /home/agent && \
-    mise exec node@$NODE_DEFAULT -- npm install -g \
-      @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
-      @openai/codex@${CODEX_VERSION} \
-      opencode-ai \
-      pnpm \
-      yarn \
-      eslint \
-      prettier
+ARG CLAUDE_CODE_VERSION="latest"
+ARG CODEX_VERSION="latest"
 
-# Install Go tools (user bin to avoid permission issues)
-RUN GO_DEFAULT=$(echo "$GO_VERSIONS" | cut -d, -f1) && \
-    mkdir -p /home/agent/.local/go/bin && \
-    GOBIN=/home/agent/.local/go/bin mise exec go@$GO_DEFAULT -- go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest && \
-    GOBIN=/home/agent/.local/go/bin mise exec go@$GO_DEFAULT -- go install github.com/go-delve/delve/cmd/dlv@latest
+# Install Homebrew
+RUN /bin/bash -c "CI=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"" && \
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
-# Install Ruby tools
-RUN RUBY_DEFAULT=$(echo "$RUBY_VERSIONS" | cut -d, -f1) && \
-    mise exec ruby@$RUBY_DEFAULT -- gem install --no-document bundler rubocop
+# Install Claude Code (native installer)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+
+# Install Global NPM Packages (AI Agents)
+RUN --mount=type=cache,target=/home/agent/.npm,uid=1000,gid=1000 \
+    mise exec node -- npm install -g \
+    @openai/codex@latest \
+    opencode-ai \
+    yarn \
+    pnpm \
+    eslint \
+    prettier
+
+# Create a Gemini wrapper since there isn't a standard 'gemini' CLI yet
+RUN mkdir -p /home/agent/.local/bin && \
+    echo '#!/bin/bash\nopencode --model "${RIZE_GEMINI_MODEL:-gemini-pro}" "$@"' > /home/agent/.local/bin/gemini && \
+    chmod +x /home/agent/.local/bin/gemini
 
 # Install Python tools via pipx
-RUN pipx ensurepath && \
-    pipx install uv && \
-    pipx install yq || true
+RUN --mount=type=cache,target=/home/agent/.cache/pip,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/agent/.cache/pipx,uid=1000,gid=1000 \
+    mise exec python -- pip install pipx && \
+    mise exec python -- python -m pipx ensurepath && \
+    mise exec python -- pipx install uv && \
+    mise exec python -- pipx install yq
+
+# Install Go Tools
+# Tools: delve (debug), golangci-lint
+RUN --mount=type=cache,target=/home/agent/.cache/go-build,uid=1000,gid=1000 \
+    --mount=type=cache,target=/home/agent/go/pkg,uid=1000,gid=1000 \
+    mise exec go -- go install github.com/go-delve/delve/cmd/dlv@latest && \
+    mise exec go -- go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 
 # =============================================================================
-# Stage 4: Final - Entrypoint script and configuration
-# This stage is rebuilt when the rize script changes, but tools remain cached
+# Stage 5: Slim - Release Image without extra tools
 # =============================================================================
-FROM tools AS final
+FROM base AS slim
 
-# Switch back to root for entrypoint creation
+COPY --from=languages --chown=agent:agent /home/agent/.local /home/agent/.local
+COPY --from=languages --chown=agent:agent /home/agent/.config /home/agent/.config
+
+USER agent
+ENV PATH="/home/agent/.local/bin:/home/agent/.local/share/mise/shims:$PATH"
+COPY --chown=agent:agent .config/.zshrc /etc/rize/zshrc
+RUN echo 'source /etc/rize/zshrc' >> ~/.zshrc
+
+USER root
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/bin/zsh"]
 USER root
 
-# Create entrypoint script that initializes mise and handles commands
-# NOTE: This is the ONLY layer that rebuilds when the rize script is modified
-RUN printf '#!/bin/bash\nset -e\nexport MISE_TRUSTED_CONFIG=1\n# Use dynamic workspace path from environment, or default to old behavior\nRIZE_WORKSPACE_PATH="${RIZE_WORKSPACE_PATH:-/home/agent/workspace}"\n# Ensure workspace directory exists and has correct permissions\nif [ ! -d "$RIZE_WORKSPACE_PATH" ]; then\n  mkdir -p "$RIZE_WORKSPACE_PATH"\nfi\nif [ "$(stat -c %%u "$RIZE_WORKSPACE_PATH")" != "$(id -u agent)" ]; then\n  sudo chown agent:agent "$RIZE_WORKSPACE_PATH"\nfi\ncd "$RIZE_WORKSPACE_PATH"\n' > /usr/local/bin/docker-entrypoint.sh && \
-    printf 'if [ -f /home/agent/.env ]; then\n  set -a\n  source /home/agent/.env\n  set +a\nfi\nif [ -f ./.mise.toml ]; then\n  mise trust ./.mise.toml 2>/dev/null || true\nfi\nmise install 2>/dev/null || true\neval "$(mise activate bash 2>/dev/null || true)"\nNPM_PREFIX=$(mise exec node -- npm config get prefix 2>/dev/null || echo "")\nif [ -n "$NPM_PREFIX" ]; then\n  NPM_BIN="$NPM_PREFIX/bin"\n  if [ -d "$NPM_BIN" ]; then\n  export PATH="$NPM_BIN:$PATH"\n  fi\nfi\nif [ $# -eq 0 ]; then\n    exec /bin/zsh -l\nelse\n    exec "$@"\nfi\n' >> /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
+# =============================================================================
+# Stage 4: Final - Release Image
+# =============================================================================
+FROM base AS final
 
-# Set working directory
-WORKDIR /home/agent
+# Copy Mise and installed runtimes/tools from the 'tools' stage
+# Mise stores data in ~/.local/share/mise and ~/.config/mise (or ~/.local/bin/mise for the binary)
+COPY --from=tools --chown=agent:agent /home/agent/.local /home/agent/.local
+COPY --from=tools --chown=agent:agent /home/agent/.config /home/agent/.config
 
-# Use exec form entrypoint with bash
-ENTRYPOINT ["/bin/bash", "/usr/local/bin/docker-entrypoint.sh"]
-CMD []
+# Copy Homebrew
+COPY --from=tools --chown=agent:agent /home/linuxbrew /home/linuxbrew
+
+# Setup Env for Mise
+USER agent
+ENV PATH="/home/agent/.local/bin:/home/agent/.local/share/mise/shims:$PATH"
+# Ensure mise is activated in zshrc for interactive sessions
+# Also configure HISTFILE to use the persisted volume
+# And configure Homebrew and Aliases
+COPY --chown=agent:agent .config/.zshrc /etc/rize/zshrc
+RUN echo 'source /etc/rize/zshrc' >> ~/.zshrc
+
+USER root
+
+# Copy Entrypoint
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Docker Socket permissions workaround (optional, handled by group in entrypoint usually)
+# We don't need to do much here as we mount the socket at runtime.
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/bin/zsh"]
+USER root
