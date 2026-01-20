@@ -207,8 +207,72 @@ cmd_help() {
     echo "  opencode    Run OpenCode agent"
     echo "  gemini      Run Gemini agent (via opencode)"
     echo "  exec        Run a shell command directly"
+    echo "  update      Pull latest image and update rize script"
     echo "  install     Install rize to /usr/local/bin"
+    echo "  uninstall   Remove rize from /usr/local/bin"
     echo "  help        Show this help"
+}
+
+cmd_update() {
+    echo -e "${BLUE}Updating image $IMAGE_NAME...${NC}"
+    docker pull "$IMAGE_NAME" || {
+        echo -e "${RED}Error: Failed to pull image $IMAGE_NAME.${NC}"
+        exit 1
+    }
+
+    local update_src="${RIZE_INSTALL_SRC:-https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/rize}"
+    echo -e "${BLUE}Updating rize script...${NC}"
+    RIZE_INSTALL_SRC="$update_src" cmd_install
+}
+
+cmd_uninstall() {
+    local uninstall_path="/usr/local/bin/rize"
+    local prompt="This will remove Docker image ${IMAGE_NAME} and uninstall rize from ${uninstall_path}. Continue? [y/N] "
+
+    if [ -t 0 ]; then
+        read -r -p "$prompt" confirm
+    else
+        echo -e "${YELLOW}Non-interactive shell detected. Aborting uninstall.${NC}"
+        echo -e "${YELLOW}${prompt}${NC}"
+        return 1
+    fi
+
+    case "${confirm:-}" in
+        [yY]|[yY][eE][sS])
+            ;;
+        *)
+            echo -e "${YELLOW}Uninstall cancelled.${NC}"
+            return 0
+            ;;
+    esac
+
+    if command -v docker >/dev/null 2>&1; then
+        if docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+            echo -e "${BLUE}Removing image $IMAGE_NAME...${NC}"
+            docker image rm -f "$IMAGE_NAME" >/dev/null 2>&1 || {
+                echo -e "${YELLOW}Warning: Failed to remove image $IMAGE_NAME.${NC}"
+            }
+        fi
+    else
+        echo -e "${YELLOW}Warning: docker not found; skipping image removal.${NC}"
+    fi
+
+    if [ ! -e "$uninstall_path" ]; then
+        echo -e "${YELLOW}rize not found at $uninstall_path${NC}"
+        return 0
+    fi
+
+    if [ -w "$uninstall_path" ] || [ -w "$(dirname "$uninstall_path")" ]; then
+        rm -f "$uninstall_path"
+        echo -e "${GREEN}Uninstalled rize from $uninstall_path${NC}"
+    elif command -v sudo >/dev/null 2>&1; then
+        echo -e "${YELLOW}Removing $uninstall_path requires elevated permissions; sudo may prompt for your password.${NC}"
+        sudo rm -f "$uninstall_path"
+        echo -e "${GREEN}Uninstalled rize from $uninstall_path${NC}"
+    else
+        echo -e "${RED}Error: $uninstall_path is not writable and sudo is not available.${NC}"
+        exit 1
+    fi
 }
 
 # Main Dispatch
@@ -253,8 +317,14 @@ case "$COMMAND" in
     exec)
         cmd_exec "$@"
         ;;
+    update)
+        cmd_update
+        ;;
     install)
         cmd_install
+        ;;
+    uninstall)
+        cmd_uninstall
         ;;
     *)
         cmd_help
