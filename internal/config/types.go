@@ -12,9 +12,10 @@ type Config struct {
 type Service struct {
 	Enabled     bool              `yaml:"enabled"`
 	Image       string            `yaml:"image"`
-	Ports       []string          `yaml:"ports"`
-	Environment map[string]string `yaml:"environment"`
-	Volumes     []string          `yaml:"volumes"`
+	Ports       []string          `yaml:"ports,omitempty"`
+	Command     []string          `yaml:"command,omitempty"`
+	Environment map[string]string `yaml:"environment,omitempty"`
+	Volumes     []string          `yaml:"volumes,omitempty"`
 	HealthCheck *HealthCheck      `yaml:"healthcheck,omitempty"`
 }
 

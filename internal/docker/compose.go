@@ -19,11 +19,12 @@ type ComposeFile struct {
 }
 
 type ComposeService struct {
-	Image       string            `yaml:"image"`
-	Ports       []string          `yaml:"ports,omitempty"`
-	Environment map[string]string `yaml:"environment,omitempty"`
-	Volumes     []string          `yaml:"volumes,omitempty"`
-	Networks    []string          `yaml:"networks,omitempty"`
+	Image       string              `yaml:"image"`
+	Command     []string            `yaml:"command,omitempty"`
+	Ports       []string            `yaml:"ports,omitempty"`
+	Environment map[string]string   `yaml:"environment,omitempty"`
+	Volumes     []string            `yaml:"volumes,omitempty"`
+	Networks    []string            `yaml:"networks,omitempty"`
 	HealthCheck *ComposeHealthCheck `yaml:"healthcheck,omitempty"`
 }
 
@@ -63,6 +64,7 @@ func GenerateComposeFile(cfg *config.Config) (*ComposeFile, error) {
 
 		composeSvc := ComposeService{
 			Image:       svc.Image,
+			Command:     svc.Command,
 			Ports:       svc.Ports,
 			Environment: svc.Environment,
 			Volumes:     svc.Volumes,

@@ -14,12 +14,12 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Check services
-	if len(cfg.Services) != 3 {
-		t.Errorf("Expected 3 services, got %d", len(cfg.Services))
+	if len(cfg.Services) != 4 {
+		t.Errorf("Expected 4 services, got %d", len(cfg.Services))
 	}
 
 	// Check that default services exist
-	services := []string{"playwright", "postgres", "redis"}
+	services := []string{"playwright", "postgres", "redis", "mitmproxy"}
 	for _, svc := range services {
 		if _, exists := cfg.Services[svc]; !exists {
 			t.Errorf("Service %s not found in default config", svc)
@@ -38,8 +38,8 @@ func TestGetEnabledServices(t *testing.T) {
 	enabled := cfg.GetEnabledServices()
 
 	// All services should be enabled by default
-	if len(enabled) != 3 {
-		t.Errorf("Expected 3 enabled services, got %d", len(enabled))
+	if len(enabled) != 4 {
+		t.Errorf("Expected 4 enabled services, got %d", len(enabled))
 	}
 
 	// Disable a service
@@ -49,8 +49,8 @@ func TestGetEnabledServices(t *testing.T) {
 
 	enabled = cfg.GetEnabledServices()
 
-	if len(enabled) != 2 {
-		t.Errorf("Expected 2 enabled services after disabling one, got %d", len(enabled))
+	if len(enabled) != 3 {
+		t.Errorf("Expected 3 enabled services after disabling one, got %d", len(enabled))
 	}
 }
 

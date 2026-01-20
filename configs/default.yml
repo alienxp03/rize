@@ -44,6 +44,19 @@ services:
       timeout: "3s"
       retries: 5
 
+  # mitmproxy - Network traffic logging and inspection
+  # Web UI available at http://localhost:8081
+  # Automatically sets HTTP_PROXY and HTTPS_PROXY in the container
+  mitmproxy:
+    enabled: true
+    image: "mitmproxy/mitmproxy:latest"
+    command: ["mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false"]
+    ports:
+      - "8080:8080"  # Proxy port
+      - "8081:8081"  # Web UI
+    volumes:
+      - "rize-mitmproxy:/home/mitmproxy/.mitmproxy"
+
 # Custom environment variables (injected into rize container)
 # These will be available to all AI agents
 environment:
@@ -56,6 +69,9 @@ environment:
   # DATABASE_URL: "postgresql://dev:dev@postgres:5432/dev"
   # REDIS_URL: "redis://redis:6379"
   # PLAYWRIGHT_URL: "http://playwright:3000"
+  # HTTP_PROXY: "http://mitmproxy:8080"
+  # HTTPS_PROXY: "http://mitmproxy:8080"
+  # NO_PROXY: "localhost,127.0.0.1"
 
   # Add your custom environment variables here
   # MY_CUSTOM_VAR: "value"
@@ -69,3 +85,4 @@ network:
 volumes:
   - "rize-postgres"
   - "rize-redis"
+  - "rize-mitmproxy"

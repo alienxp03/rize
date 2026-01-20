@@ -41,6 +41,13 @@ func DefaultConfig() *Config {
 					Retries:  5,
 				},
 			},
+			"mitmproxy": {
+				Enabled: true,
+				Image:   "mitmproxy/mitmproxy:latest",
+				Ports:   []string{"8080:8080", "8081:8081"},
+				Volumes: []string{"rize-mitmproxy:/home/mitmproxy/.mitmproxy"},
+				Command: []string{"mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false"},
+			},
 		},
 		Environment: map[string]string{
 			"ANTHROPIC_API_KEY": "",
@@ -54,6 +61,7 @@ func DefaultConfig() *Config {
 		Volumes: []string{
 			"rize-postgres",
 			"rize-redis",
+			"rize-mitmproxy",
 		},
 	}
 }

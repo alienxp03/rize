@@ -121,6 +121,10 @@ func (c *Client) buildContainerConfigs(cfg *config.Config, cmd []string) (*conta
 				env = append(env, fmt.Sprintf("REDIS_URL=redis://%s:6379", name))
 			case "playwright":
 				env = append(env, fmt.Sprintf("PLAYWRIGHT_URL=http://%s:3000", name))
+			case "mitmproxy":
+				env = append(env, fmt.Sprintf("HTTP_PROXY=http://%s:8080", name))
+				env = append(env, fmt.Sprintf("HTTPS_PROXY=http://%s:8080", name))
+				env = append(env, "NO_PROXY=localhost,127.0.0.1")
 			}
 		}
 	}

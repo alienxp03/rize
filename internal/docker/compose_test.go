@@ -15,12 +15,12 @@ func TestGenerateComposeFile(t *testing.T) {
 	}
 
 	// Check services
-	if len(compose.Services) != 3 {
-		t.Errorf("Expected 3 services, got %d", len(compose.Services))
+	if len(compose.Services) != 4 {
+		t.Errorf("Expected 4 services, got %d", len(compose.Services))
 	}
 
 	// Check that services exist
-	services := []string{"playwright", "postgres", "redis"}
+	services := []string{"playwright", "postgres", "redis", "mitmproxy"}
 	for _, svc := range services {
 		if _, exists := compose.Services[svc]; !exists {
 			t.Errorf("Service %s not found in compose file", svc)
@@ -33,8 +33,8 @@ func TestGenerateComposeFile(t *testing.T) {
 	}
 
 	// Check volumes
-	if len(compose.Volumes) != 2 {
-		t.Errorf("Expected 2 volumes, got %d", len(compose.Volumes))
+	if len(compose.Volumes) != 3 {
+		t.Errorf("Expected 3 volumes, got %d", len(compose.Volumes))
 	}
 }
 
@@ -51,9 +51,9 @@ func TestGenerateComposeFileWithDisabledService(t *testing.T) {
 		t.Fatalf("Failed to generate compose file: %v", err)
 	}
 
-	// Should only have 2 services now
-	if len(compose.Services) != 2 {
-		t.Errorf("Expected 2 services, got %d", len(compose.Services))
+	// Should only have 3 services now (4 - 1 disabled)
+	if len(compose.Services) != 3 {
+		t.Errorf("Expected 3 services, got %d", len(compose.Services))
 	}
 
 	// Postgres should not be in the compose file
