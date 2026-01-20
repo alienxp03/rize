@@ -31,8 +31,8 @@ curl -fsSL https://raw.githubusercontent.com/alienxp03/rize/refs/heads/master/ri
 ### Multi-Project Support
 
 Each project gets its own workspace directory inside the container:
-- `/home/agent/workspace/my-app` - Project named "my-app"
-- `/home/agent/workspace/my-app-2` - Second project also named "my-app"
+- `/workspace/my-app` - Project named "my-app"
+- `/workspace/my-app-2` - Second project also named "my-app"
 
 The project name is derived from the basename of the current directory. If you have multiple directories with the same name, they automatically get numeric suffixes to avoid conflicts.
 
@@ -54,6 +54,11 @@ GITLAB_TOKEN=glpat-xxxxxxxxxxxxx
 The `.env` file is automatically sourced when the container starts, making variables available to all tools (Go, Node, Ruby, Python, etc.). The file is mounted read-only for safety—to update variables, edit `~/.env` on your host and restart the container.
 
 **Note**: This is for global environment variables. Project-specific `.env` files can also be created in the workspace directory and will be respected.
+
+### Rize Overrides
+
+- `RIZE_IMAGE` - Override the image tag or digest (e.g., `alienxp03/rize:2026-01-15` or `alienxp03/rize@sha256:...`) for deterministic runs.
+- `RIZE_GEMINI_MODEL` - Override the default Gemini model used by `rize gemini` (defaults to `gemini-pro`).
 
 ### .netrc for Authentication
 
@@ -124,5 +129,17 @@ docker volume rm $(docker volume ls -q | grep rize-vendor) 2>/dev/null || true
 
 ## Notes
 
-- Workspace mounts to `/home/agent/workspace/<project-name>`; extra mounts go under `/home/agent/mounts/<name>`.
+- Workspace mounts to `/workspace/<project-name>`; extra mounts go under `/home/agent/mounts/<name>`.
 - Vendor directory is managed via Docker volumes to avoid filesystem permission conflicts between macOS and Linux.
+
+## Local Builds (Full vs Slim)
+
+If you build locally, you can choose between a full or slim image:
+
+```bash
+# Full (default)
+docker build -t rize:full --target final .
+
+# Slim (no Homebrew and fewer extra tools)
+docker build -t rize:slim --target slim .
+```
