@@ -22,16 +22,21 @@ func ConfigPath() (string, error) {
 }
 
 // Load loads the configuration from the config file
-// If the file doesn't exist, it returns the default configuration
+// If the file doesn't exist, it creates it with default configuration
 func Load() (*Config, error) {
 	configFile, err := ConfigPath()
 	if err != nil {
 		return nil, err
 	}
 
-	// If config file doesn't exist, return default config
+	// If config file doesn't exist, create it with defaults
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		return DefaultConfig(), nil
+		cfg := DefaultConfig()
+		if err := Save(cfg); err != nil {
+			// If we can't save, just return the default config in memory
+			return cfg, nil
+		}
+		return cfg, nil
 	}
 
 	data, err := os.ReadFile(configFile)
