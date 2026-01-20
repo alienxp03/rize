@@ -1,11 +1,22 @@
-# User and editor files
-.DS_Store
-.vscode/
+# Build artifacts
+bin/
+dist/
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# IDE
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
-.claude/
-*.log
-docs/
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (for local testing)
+.config/rize/config.yml
+.config/rize/docker-compose.yml

@@ -14,19 +14,6 @@ if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 fi
 
-# Start bundled services by default if available.
-if command -v service >/dev/null 2>&1; then
-    $SUDO service postgresql start >/dev/null 2>&1 || true
-    $SUDO service redis-server start >/dev/null 2>&1 || true
-else
-    if command -v pg_ctlcluster >/dev/null 2>&1; then
-        $SUDO pg_ctlcluster 18 main start >/dev/null 2>&1 || true
-    fi
-    if command -v redis-server >/dev/null 2>&1; then
-        $SUDO redis-server --daemonize yes >/dev/null 2>&1 || true
-    fi
-fi
-
 # Check if we need to adjust the user's UID/GID
 if [ "$(id -u $USERNAME)" != "$HOST_UID" ] || [ "$(id -g $USERNAME)" != "$HOST_GID" ]; then
     # echo "Updating UID/GID to $HOST_UID:$HOST_GID..."

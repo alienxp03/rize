@@ -1,0 +1,71 @@
+# Rize Configuration File
+# This file defines services and environment variables for your AI agent environment
+
+# Service definitions (managed by docker compose)
+services:
+  # Playwright MCP Server - Browser automation
+  playwright:
+    enabled: true
+    image: "mcr.microsoft.com/playwright:v1.40.0"
+    ports:
+      - "3000:3000"
+    environment:
+      PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
+
+  # PostgreSQL Database
+  postgres:
+    enabled: true
+    image: "postgres:16-alpine"
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: "dev"
+      POSTGRES_USER: "dev"
+      POSTGRES_DB: "dev"
+    volumes:
+      - "rize-postgres:/var/lib/postgresql/data"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev"]
+      interval: "5s"
+      timeout: "5s"
+      retries: 5
+
+  # Redis Cache
+  redis:
+    enabled: true
+    image: "redis:7-alpine"
+    ports:
+      - "6379:6379"
+    volumes:
+      - "rize-redis:/data"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: "5s"
+      timeout: "3s"
+      retries: 5
+
+# Custom environment variables (injected into rize container)
+# These will be available to all AI agents
+environment:
+  # AI API Keys
+  ANTHROPIC_API_KEY: ""
+  OPENAI_API_KEY: ""
+  GOOGLE_API_KEY: ""
+
+  # Service URLs (auto-set by rize if services are enabled)
+  # DATABASE_URL: "postgresql://dev:dev@postgres:5432/dev"
+  # REDIS_URL: "redis://redis:6379"
+  # PLAYWRIGHT_URL: "http://playwright:3000"
+
+  # Add your custom environment variables here
+  # MY_CUSTOM_VAR: "value"
+
+# Network configuration
+network:
+  name: "rize"
+  driver: "bridge"
+
+# Volumes
+volumes:
+  - "rize-postgres"
+  - "rize-redis"
