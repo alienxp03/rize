@@ -239,6 +239,16 @@ func (c *Client) buildContainerConfigs(cfg *config.Config) (string, string, *con
 	// Add home directory mounts
 	home, _ := os.UserHomeDir()
 
+	// SSH directory (default mount)
+	sshDir := filepath.Join(home, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err == nil {
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeBind,
+			Source: sshDir,
+			Target: filepath.Join(ContainerHome, ".ssh"),
+		})
+	}
+
 	// Claude directories
 	claudeDirs := []string{"commands", "agents", "skills"}
 	for _, dir := range claudeDirs {
@@ -256,7 +266,6 @@ func (c *Client) buildContainerConfigs(cfg *config.Config) (string, string, *con
 		".config/opencode": ".config/opencode",
 		".netrc":           ".netrc",
 		".gitconfig":       ".gitconfig",
-		".ssh/known_hosts": ".ssh/known_hosts",
 		".env":             ".env",
 	}
 
