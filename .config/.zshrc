@@ -1,7 +1,11 @@
 # Rize zsh defaults
 # Loaded from ~/.zshrc to keep Dockerfile clean.
 
-eval "$(~/.local/bin/mise activate zsh)"
+eval "$(
+  ~/.local/bin/mise activate zsh \
+    | sed -E 's/\x1B\[[0-9;]*[mK]//g' \
+    | sed -E '/^mise WARN/d'
+)"
 HISTFILE=~/.local/share/rize/zsh_history
 mkdir -p ~/.local/share/rize
 

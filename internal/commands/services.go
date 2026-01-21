@@ -110,7 +110,7 @@ func autoStartServices(cfg *config.Config) error {
 
 	// Try to start services, but don't fail if it doesn't work
 	// This will fail silently as per requirements
-	docker.ComposeUp(cfg)
+	docker.ComposeUpQuiet(cfg)
 
 	return nil
 }

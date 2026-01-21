@@ -90,6 +90,11 @@ if [ "$1" = "exec_as_root" ]; then
         exec "$@"
     fi
 else
+    if [ "$(id -u)" -eq 0 ] && [ -e /home/agent/.bash_profile ]; then
+        chown agent:agent /home/agent/.bash_profile 2>/dev/null || true
+        chmod 644 /home/agent/.bash_profile 2>/dev/null || true
+    fi
+
     # Ensure agent dirs are present and writable
     if [ "$(id -u)" -eq 0 ]; then
         mkdir -p /home/agent/.agents/claude /home/agent/.agents/codex
@@ -101,7 +106,12 @@ else
     # We wrap the command in a shell that sources the environment
 
     if [ "$(id -u)" -eq 0 ]; then
-        exec sudo -E -H -u "$USERNAME" bash -lc '
+        exec sudo -E -H -u "$USERNAME" env \
+        PATH="/home/agent/.local/bin:$PATH" \
+        MISE_TRUSTED_CONFIG=1 \
+        REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+        SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+        bash -lc '
         export PATH="/home/agent/.local/bin:$PATH"
         export MISE_TRUSTED_CONFIG=1
         export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
@@ -188,7 +198,11 @@ else
         if [ -f "$WORKSPACE_DIR/.config/mise/config.toml" ]; then
             mise trust "$WORKSPACE_DIR/.config/mise/config.toml" >/dev/null 2>&1 || true
         fi
-        eval "$(mise activate bash)"
+        eval "$(
+            mise activate bash \
+              | sed -E "s/\\x1B\\[[0-9;]*[mK]//g" \
+              | sed -E "/^mise WARN/d"
+        )"
 
         # Add npm binaries to PATH if they exist
         NPM_PREFIX=$(npm config get prefix 2>/dev/null || echo "")
@@ -204,7 +218,12 @@ else
         fi
         ' -- "$@"
     else
-        exec bash -lc '
+        exec env \
+        PATH="/home/agent/.local/bin:$PATH" \
+        MISE_TRUSTED_CONFIG=1 \
+        REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+        SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+        bash -lc '
         export PATH="/home/agent/.local/bin:$PATH"
         export MISE_TRUSTED_CONFIG=1
         export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
@@ -291,7 +310,11 @@ else
         if [ -f "$WORKSPACE_DIR/.config/mise/config.toml" ]; then
             mise trust "$WORKSPACE_DIR/.config/mise/config.toml" >/dev/null 2>&1 || true
         fi
-        eval "$(mise activate bash)"
+        eval "$(
+            mise activate bash \
+              | sed -E "s/\\x1B\\[[0-9;]*[mK]//g" \
+              | sed -E "/^mise WARN/d"
+        )"
 
         # Add npm binaries to PATH if they exist
         NPM_PREFIX=$(npm config get prefix 2>/dev/null || echo "")

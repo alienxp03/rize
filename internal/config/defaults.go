@@ -7,7 +7,7 @@ func DefaultConfig() *Config {
 			"playwright": {
 				Enabled: true,
 				Image:   "mcr.microsoft.com/playwright:v1.40.0",
-				Ports:   []string{"3000:3000"},
+				Ports:   []string{"8381:3000"},
 				Environment: map[string]string{
 					"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
 				},
@@ -15,7 +15,6 @@ func DefaultConfig() *Config {
 			"postgres": {
 				Enabled: true,
 				Image:   "postgres:16-alpine",
-				Ports:   []string{"5432:5432"},
 				Environment: map[string]string{
 					"POSTGRES_PASSWORD": "dev",
 					"POSTGRES_USER":     "dev",
@@ -32,7 +31,6 @@ func DefaultConfig() *Config {
 			"redis": {
 				Enabled: true,
 				Image:   "redis:7-alpine",
-				Ports:   []string{"6379:6379"},
 				Volumes: []string{"rize-redis:/data"},
 				HealthCheck: &HealthCheck{
 					Test:     []string{"CMD", "redis-cli", "ping"},
@@ -46,7 +44,22 @@ func DefaultConfig() *Config {
 				Image:   "mitmproxy/mitmproxy:latest",
 				Ports:   []string{"8080:8080", "8081:8081"},
 				Volumes: []string{"rize-mitmproxy:/home/mitmproxy/.mitmproxy"},
-				Command: []string{"mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false"},
+				Command: []string{
+					"/bin/sh",
+					"-c",
+					`cat > /tmp/rize-noauth.py <<'PY'
+from mitmproxy import ctx
+
+class DisableWebAuth:
+    def running(self):
+        app = getattr(ctx.master, "app", None)
+        if app:
+            app.settings["is_valid_password"] = lambda _password: True
+
+addons = [DisableWebAuth()]
+PY
+exec mitmweb --web-host 0.0.0.0 --set block_global=false --set web_password= --set web_open_browser=false -s /tmp/rize-noauth.py`,
+				},
 			},
 		},
 		Environment: map[string]string{

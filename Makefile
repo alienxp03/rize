@@ -1,4 +1,4 @@
-.PHONY: help build build-cli build-image install test clean push
+.PHONY: help build build-cli build-image install test clean push exec
 
 IMAGE_NAME := alienxp03/rize:latest
 BINARY_NAME := rize
@@ -80,3 +80,10 @@ push:
 	@echo "Pushing $(IMAGE_NAME) to Docker Hub..."
 	@docker push $(IMAGE_NAME)
 	@echo "✓ Push complete"
+
+# Run a command in the container (usage: make exec echo "hello")
+exec: build-cli
+	@$(BUILD_DIR)/$(BINARY_NAME) exec $(filter-out $@,$(MAKECMDGOALS))
+
+%:
+	@:

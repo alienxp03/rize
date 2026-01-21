@@ -8,7 +8,7 @@ services:
     enabled: true
     image: "mcr.microsoft.com/playwright:v1.40.0"
     ports:
-      - "3000:3000"
+      - "8381:3000"
     environment:
       PLAYWRIGHT_BROWSERS_PATH: "/ms-playwright"
 
@@ -16,8 +16,6 @@ services:
   postgres:
     enabled: true
     image: "postgres:16-alpine"
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_PASSWORD: "dev"
       POSTGRES_USER: "dev"
@@ -34,8 +32,6 @@ services:
   redis:
     enabled: true
     image: "redis:7-alpine"
-    ports:
-      - "6379:6379"
     volumes:
       - "rize-redis:/data"
     healthcheck:
@@ -51,7 +47,22 @@ services:
   mitmproxy:
     enabled: true
     image: "mitmproxy/mitmproxy:latest"
-    command: ["mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false"]
+    command:
+      - /bin/sh
+      - -c
+      - |
+        cat > /tmp/rize-noauth.py <<'PY'
+        from mitmproxy import ctx
+
+        class DisableWebAuth:
+            def running(self):
+                app = getattr(ctx.master, "app", None)
+                if app:
+                    app.settings["is_valid_password"] = lambda _password: True
+
+        addons = [DisableWebAuth()]
+        PY
+        exec mitmweb --web-host 0.0.0.0 --set block_global=false --set web_password= --set web_open_browser=false -s /tmp/rize-noauth.py
     ports:
       - "8080:8080"  # Proxy port
       - "8081:8081"  # Web UI

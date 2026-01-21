@@ -50,7 +50,12 @@ func Load() (*Config, error) {
 	}
 
 	// Merge with defaults for missing fields
-	return mergeWithDefaults(&cfg), nil
+	merged := mergeWithDefaults(&cfg)
+	if normalizeLegacyDefaults(merged) {
+		_ = Save(merged)
+	}
+
+	return merged, nil
 }
 
 // Save saves the configuration to the config file
@@ -87,10 +92,12 @@ func mergeWithDefaults(cfg *Config) *Config {
 		cfg.Services = defaults.Services
 	} else {
 		// Fill in missing services with defaults
-		for name, svc := range defaults.Services {
-			if _, exists := cfg.Services[name]; !exists {
-				cfg.Services[name] = svc
+		for name, defaultSvc := range defaults.Services {
+			if svc, exists := cfg.Services[name]; exists {
+				cfg.Services[name] = mergeServiceWithDefaults(svc, defaultSvc)
+				continue
 			}
+			cfg.Services[name] = defaultSvc
 		}
 	}
 
@@ -110,6 +117,115 @@ func mergeWithDefaults(cfg *Config) *Config {
 	}
 
 	return cfg
+}
+
+func mergeServiceWithDefaults(svc Service, defaults Service) Service {
+	if svc.Image == "" {
+		svc.Image = defaults.Image
+	}
+
+	if svc.Ports == nil {
+		svc.Ports = defaults.Ports
+	}
+
+	if svc.Command == nil {
+		svc.Command = defaults.Command
+	}
+
+	if svc.Environment == nil {
+		svc.Environment = defaults.Environment
+	} else {
+		for key, value := range defaults.Environment {
+			if _, exists := svc.Environment[key]; !exists {
+				svc.Environment[key] = value
+			}
+		}
+	}
+
+	if svc.Volumes == nil {
+		svc.Volumes = defaults.Volumes
+	}
+
+	if svc.HealthCheck == nil {
+		svc.HealthCheck = defaults.HealthCheck
+	}
+
+	return svc
+}
+
+func normalizeLegacyDefaults(cfg *Config) bool {
+	defaults := DefaultConfig()
+	legacyPorts := map[string][]string{
+		"playwright": {"3000:3000"},
+		"postgres":   {"5432:5432"},
+		"redis":      {"6379:6379"},
+	}
+	legacyCommands := map[string][][]string{
+		"mitmproxy": {
+			{"mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false"},
+			{"mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false", "--set", "web_username=", "--set", "web_password="},
+		},
+	}
+
+	changed := false
+	for name, legacy := range legacyPorts {
+		svc, exists := cfg.Services[name]
+		if !exists {
+			continue
+		}
+
+		if portsEqual(svc.Ports, legacy) {
+			svc.Ports = defaults.Services[name].Ports
+			cfg.Services[name] = svc
+			changed = true
+		}
+	}
+
+	for name, legacyList := range legacyCommands {
+		svc, exists := cfg.Services[name]
+		if !exists {
+			continue
+		}
+
+		for _, legacy := range legacyList {
+			if commandsEqual(svc.Command, legacy) {
+				svc.Command = defaults.Services[name].Command
+				cfg.Services[name] = svc
+				changed = true
+				break
+			}
+		}
+	}
+
+	return changed
+}
+
+func portsEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func commandsEqual(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // GetEnabledServices returns a list of enabled service names

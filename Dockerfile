@@ -111,14 +111,59 @@ RUN if [ ! -d "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k" ]; t
     cp ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k/config/p10k-rainbow.zsh ~/.p10k.zsh && \
     echo 'typeset -g POWERLEVEL9K_DISABLE_GITSTATUS=true' >> ~/.p10k.zsh && \
     echo 'POWERLEVEL9K_DISABLE_CONFIGURATION_WIZARD=true' >> ~/.zshrc
+# Disable instant prompt (raw expansion output in container TTY)
+RUN sed -i 's/POWERLEVEL9K_INSTANT_PROMPT=.*/POWERLEVEL9K_INSTANT_PROMPT=off/' ~/.p10k.zsh
 
 # Pre-download gitstatusd to avoid fetching it on startup
 RUN ${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k/gitstatus/install
 
 # Fix: Set ZSH_THEME to point to the correct location inside the directory
 RUN sed -i 's/ZSH_THEME="powerlevel10k"/ZSH_THEME="powerlevel10k\/powerlevel10k"/' ~/.zshrc
+# Disable theme so we can use a minimal prompt.
+RUN sed -i 's/^ZSH_THEME=.*/ZSH_THEME=""/' ~/.zshrc
+# Ensure promptsubst is enabled before oh-my-zsh initializes (required for p10k instant prompt)
+RUN if ! grep -q '^setopt promptsubst$' ~/.zshrc; then \
+      { \
+        while IFS= read -r line; do \
+          if [ "$line" = 'source $ZSH/oh-my-zsh.sh' ]; then \
+            echo 'setopt promptsubst'; \
+          fi; \
+          echo "$line"; \
+        done < ~/.zshrc; \
+      } > /tmp/zshrc && mv /tmp/zshrc ~/.zshrc; \
+    fi
+# Disable p10k instant prompt before theme load to avoid raw prompt output on first shell.
+RUN if ! grep -q '^typeset -g POWERLEVEL9K_INSTANT_PROMPT=off$' ~/.zshrc; then \
+      { \
+        while IFS= read -r line; do \
+          if [ "$line" = 'source $ZSH/oh-my-zsh.sh' ]; then \
+            echo 'typeset -g POWERLEVEL9K_INSTANT_PROMPT=off'; \
+          fi; \
+          echo "$line"; \
+        done < ~/.zshrc; \
+      } > /tmp/zshrc && mv /tmp/zshrc ~/.zshrc; \
+    fi
+
+# Simple prompt: current path > git status (branch + dirty markers only).
+RUN cat <<'EOF' >> ~/.zshrc
+
+# Simple prompt: current path > git status
+setopt prompt_subst
+autoload -Uz vcs_info add-zsh-hook
+zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:git:*' formats '%b%u%c'
+zstyle ':vcs_info:git:*' unstagedstr '*'
+zstyle ':vcs_info:git:*' stagedstr '+'
+add-zsh-hook precmd vcs_info
+RPROMPT=''
+PROMPT='%~ > ${vcs_info_msg_0_:+${vcs_info_msg_0_} } > '
+EOF
 
 USER root
+# Ensure promptsubst is enabled from the earliest startup file.
+RUN if ! grep -q '^setopt promptsubst$' /etc/zsh/zshenv; then \
+      echo 'setopt promptsubst' >> /etc/zsh/zshenv; \
+    fi
 
 # =============================================================================
 # Stage 1b: Build dependencies (for language compilation)

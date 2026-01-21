@@ -1,6 +1,9 @@
 [tools]
-node = ["24"]
-python = ["3.12"]
-ruby = ["3.4"]
-go = ["1.25"]
-rust = ["1.92"]
+node = ["24.13.0"]
+python = ["3.12.12"]
+ruby = ["3.4.8"]
+go = "1.25"
+rust = ["1.92.0"]
+
+[settings]
+quiet = true

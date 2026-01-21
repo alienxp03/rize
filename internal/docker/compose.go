@@ -2,6 +2,7 @@ package docker
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +37,7 @@ type ComposeHealthCheck struct {
 }
 
 type ComposeNetwork struct {
+	Name   string `yaml:"name,omitempty"`
 	Driver string `yaml:"driver,omitempty"`
 }
 
@@ -53,6 +55,7 @@ func GenerateComposeFile(cfg *config.Config) (*ComposeFile, error) {
 
 	// Add network
 	compose.Networks[cfg.Network.Name] = ComposeNetwork{
+		Name:   cfg.Network.Name,
 		Driver: cfg.Network.Driver,
 	}
 
@@ -152,6 +155,24 @@ func ComposeUp(cfg *config.Config) error {
 	cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	return cmd.Run()
+}
+
+// ComposeUpQuiet starts services without emitting compose output
+func ComposeUpQuiet(cfg *config.Config) error {
+	if err := EnsureCompose(cfg); err != nil {
+		return err
+	}
+
+	composePath, err := GetComposePath()
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command("docker", "compose", "-f", composePath, "up", "-d")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
 
 	return cmd.Run()
 }
