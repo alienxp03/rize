@@ -285,12 +285,13 @@ func (c *Client) buildContainerConfigs(cfg *config.Config) (string, string, *con
 		}
 	}
 
-	// .rize directory
-	rizePath := filepath.Join(home, ".rize")
-	os.MkdirAll(rizePath, 0755)
+	// Per-project state volume (includes zsh history, etc.)
+	// Use a volume instead of bind mount to isolate state between projects
+	projectHash := shortHash(absPath)
+	stateVolumeName := fmt.Sprintf("rize-state-%s", projectHash)
 	mounts = append(mounts, mount.Mount{
-		Type:   mount.TypeBind,
-		Source: rizePath,
+		Type:   mount.TypeVolume,
+		Source: stateVolumeName,
 		Target: filepath.Join(ContainerHome, ".local/share/rize"),
 	})
 
