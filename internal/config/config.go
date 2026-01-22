@@ -1,38 +1,112 @@
 package config
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
-// ConfigPath returns the path to the config file
-func ConfigPath() (string, error) {
+// GlobalConfigPath returns the path to the global config file
+// Location: ~/.rize/config.yml
+func GlobalConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get home directory: %w", err)
 	}
 
-	configDir := filepath.Join(home, ".config", "rize")
+	configDir := filepath.Join(home, ".rize")
 	configFile := filepath.Join(configDir, "config.yml")
 
 	return configFile, nil
 }
 
-// Load loads the configuration from the config file
+// ProjectConfigPath returns the path to the per-project config file
+// Location: ~/.rize/projects/{name}-{hash}/config.yml
+func ProjectConfigPath(projectPath string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	absPath, err := filepath.Abs(projectPath)
+	if err != nil {
+		absPath = projectPath
+	}
+
+	projectName := filepath.Base(absPath)
+	safeName := sanitizeProjectName(projectName)
+	hash := shortHash(absPath)
+
+	projectDir := filepath.Join(home, ".rize", "projects", fmt.Sprintf("%s-%s", safeName, hash))
+	configFile := filepath.Join(projectDir, "config.yml")
+
+	return configFile, nil
+}
+
+// ProjectStateDir returns the path to the per-project state directory
+// Location: ~/.rize/projects/{name}-{hash}/state
+func ProjectStateDir(projectPath string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+
+	absPath, err := filepath.Abs(projectPath)
+	if err != nil {
+		absPath = projectPath
+	}
+
+	projectName := filepath.Base(absPath)
+	safeName := sanitizeProjectName(projectName)
+	hash := shortHash(absPath)
+
+	projectDir := filepath.Join(home, ".rize", "projects", fmt.Sprintf("%s-%s", safeName, hash))
+	stateDir := filepath.Join(projectDir, "state")
+
+	return stateDir, nil
+}
+
+func sanitizeProjectName(name string) string {
+	name = strings.ToLower(name)
+	var b strings.Builder
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+			continue
+		}
+		b.WriteByte('-')
+	}
+
+	safe := strings.Trim(b.String(), "-")
+	if safe == "" {
+		return "project"
+	}
+
+	return safe
+}
+
+func shortHash(value string) string {
+	sum := sha1.Sum([]byte(value))
+	return hex.EncodeToString(sum[:])[:6]
+}
+
+// LoadGlobal loads the global configuration from ~/.rize/config.yml
 // If the file doesn't exist, it creates it with default configuration
-func Load() (*Config, error) {
-	configFile, err := ConfigPath()
+func LoadGlobal() (*GlobalConfig, error) {
+	configFile, err := GlobalConfigPath()
 	if err != nil {
 		return nil, err
 	}
 
 	// If config file doesn't exist, create it with defaults
 	if _, err := os.Stat(configFile); os.IsNotExist(err) {
-		cfg := DefaultConfig()
-		if err := Save(cfg); err != nil {
+		cfg := DefaultGlobalConfig()
+		if err := SaveGlobal(cfg); err != nil {
 			// If we can't save, just return the default config in memory
 			return cfg, nil
 		}
@@ -41,26 +115,98 @@ func Load() (*Config, error) {
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file: %w", err)
+		return nil, fmt.Errorf("failed to read global config file: %w", err)
 	}
 
-	var cfg Config
+	var cfg GlobalConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("failed to parse global config file: %w", err)
 	}
 
-	// Merge with defaults for missing fields
-	merged := mergeWithDefaults(&cfg)
-	if normalizeLegacyDefaults(merged) {
-		_ = Save(merged)
+	// Ensure environment map is initialized
+	if cfg.Environment == nil {
+		cfg.Environment = make(map[string]string)
 	}
 
-	return merged, nil
+	return &cfg, nil
 }
 
-// Save saves the configuration to the config file
-func Save(cfg *Config) error {
-	configFile, err := ConfigPath()
+// LoadProject loads the per-project configuration
+// If the file doesn't exist, it creates it with default configuration
+func LoadProject(projectPath string) (*ProjectConfig, error) {
+	configFile, err := ProjectConfigPath(projectPath)
+	if err != nil {
+		return nil, err
+	}
+
+	// If config file doesn't exist, create it with defaults
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		cfg := DefaultProjectConfig()
+		if err := SaveProject(cfg, projectPath); err != nil {
+			// If we can't save, just return the default config in memory
+			return cfg, nil
+		}
+		return cfg, nil
+	}
+
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read project config file: %w", err)
+	}
+
+	var cfg ProjectConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse project config file: %w", err)
+	}
+
+	// Merge with defaults for missing services
+	cfg = *mergeProjectWithDefaults(&cfg)
+
+	return &cfg, nil
+}
+
+// Load loads and merges global + project configuration
+func Load(projectPath string) (*Config, error) {
+	global, err := LoadGlobal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load global config: %w", err)
+	}
+
+	project, err := LoadProject(projectPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load project config: %w", err)
+	}
+
+	return MergeConfigs(global, project), nil
+}
+
+// MergeConfigs merges global and project configurations
+// Project environment variables override global ones
+func MergeConfigs(global *GlobalConfig, project *ProjectConfig) *Config {
+	merged := &Config{
+		Services:    make(map[string]bool),
+		Environment: make(map[string]string),
+	}
+
+	// Copy services from project
+	for name, enabled := range project.Services {
+		merged.Services[name] = enabled
+	}
+
+	// Merge environment: global first, then project overrides
+	for key, value := range global.Environment {
+		merged.Environment[key] = value
+	}
+	for key, value := range project.Environment {
+		merged.Environment[key] = value
+	}
+
+	return merged
+}
+
+// SaveGlobal saves the global configuration
+func SaveGlobal(cfg *GlobalConfig) error {
+	configFile, err := GlobalConfigPath()
 	if err != nil {
 		return err
 	}
@@ -73,166 +219,70 @@ func Save(cfg *Config) error {
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config: %w", err)
+		return fmt.Errorf("failed to marshal global config: %w", err)
 	}
 
 	if err := os.WriteFile(configFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+		return fmt.Errorf("failed to write global config file: %w", err)
 	}
 
 	return nil
 }
 
-// mergeWithDefaults merges the loaded config with default values
-func mergeWithDefaults(cfg *Config) *Config {
-	defaults := DefaultConfig()
+// SaveProject saves the per-project configuration
+func SaveProject(cfg *ProjectConfig, projectPath string) error {
+	configFile, err := ProjectConfigPath(projectPath)
+	if err != nil {
+		return err
+	}
 
-	// Merge services
+	// Ensure config directory exists
+	configDir := filepath.Dir(configFile)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create project config directory: %w", err)
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal project config: %w", err)
+	}
+
+	if err := os.WriteFile(configFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write project config file: %w", err)
+	}
+
+	return nil
+}
+
+// mergeProjectWithDefaults merges the loaded project config with default values
+func mergeProjectWithDefaults(cfg *ProjectConfig) *ProjectConfig {
+	defaults := DefaultProjectConfig()
+
+	// Ensure services map is initialized
 	if cfg.Services == nil {
-		cfg.Services = defaults.Services
-	} else {
-		// Fill in missing services with defaults
-		for name, defaultSvc := range defaults.Services {
-			if svc, exists := cfg.Services[name]; exists {
-				cfg.Services[name] = mergeServiceWithDefaults(svc, defaultSvc)
-				continue
-			}
-			cfg.Services[name] = defaultSvc
+		cfg.Services = make(map[string]bool)
+	}
+
+	// Fill in missing services with defaults
+	for name, enabled := range defaults.Services {
+		if _, exists := cfg.Services[name]; !exists {
+			cfg.Services[name] = enabled
 		}
 	}
 
-	// Merge environment
+	// Ensure environment map is initialized
 	if cfg.Environment == nil {
 		cfg.Environment = make(map[string]string)
-	}
-
-	// Merge network config
-	if cfg.Network.Name == "" {
-		cfg.Network = defaults.Network
-	}
-
-	// Merge volumes
-	if len(cfg.Volumes) == 0 {
-		cfg.Volumes = defaults.Volumes
 	}
 
 	return cfg
 }
 
-func mergeServiceWithDefaults(svc Service, defaults Service) Service {
-	if svc.Image == "" {
-		svc.Image = defaults.Image
-	}
-
-	if svc.Ports == nil {
-		svc.Ports = defaults.Ports
-	}
-
-	if svc.Command == nil {
-		svc.Command = defaults.Command
-	}
-
-	if svc.Environment == nil {
-		svc.Environment = defaults.Environment
-	} else {
-		for key, value := range defaults.Environment {
-			if _, exists := svc.Environment[key]; !exists {
-				svc.Environment[key] = value
-			}
-		}
-	}
-
-	if svc.Volumes == nil {
-		svc.Volumes = defaults.Volumes
-	}
-
-	if svc.HealthCheck == nil {
-		svc.HealthCheck = defaults.HealthCheck
-	}
-
-	return svc
-}
-
-func normalizeLegacyDefaults(cfg *Config) bool {
-	defaults := DefaultConfig()
-	legacyPorts := map[string][]string{
-		"playwright": {"3000:3000"},
-		"postgres":   {"5432:5432"},
-		"redis":      {"6379:6379"},
-	}
-	legacyCommands := map[string][][]string{
-		"mitmproxy": {
-			{"mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false"},
-			{"mitmweb", "--web-host", "0.0.0.0", "--set", "block_global=false", "--set", "web_username=", "--set", "web_password="},
-		},
-	}
-
-	changed := false
-	for name, legacy := range legacyPorts {
-		svc, exists := cfg.Services[name]
-		if !exists {
-			continue
-		}
-
-		if portsEqual(svc.Ports, legacy) {
-			svc.Ports = defaults.Services[name].Ports
-			cfg.Services[name] = svc
-			changed = true
-		}
-	}
-
-	for name, legacyList := range legacyCommands {
-		svc, exists := cfg.Services[name]
-		if !exists {
-			continue
-		}
-
-		for _, legacy := range legacyList {
-			if commandsEqual(svc.Command, legacy) {
-				svc.Command = defaults.Services[name].Command
-				cfg.Services[name] = svc
-				changed = true
-				break
-			}
-		}
-	}
-
-	return changed
-}
-
-func portsEqual(a []string, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
-func commandsEqual(a []string, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-
-	return true
-}
-
 // GetEnabledServices returns a list of enabled service names
 func (c *Config) GetEnabledServices() []string {
 	var enabled []string
-	for name, svc := range c.Services {
-		if svc.Enabled {
+	for name, isEnabled := range c.Services {
+		if isEnabled {
 			enabled = append(enabled, name)
 		}
 	}

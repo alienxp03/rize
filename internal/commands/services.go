@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/alienxp03/rize/internal/config"
 	"github.com/alienxp03/rize/internal/docker"
@@ -10,7 +11,12 @@ import (
 
 // ServicesUp starts all enabled services
 func ServicesUp() error {
-	cfg, err := config.Load()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
 	}
@@ -33,7 +39,12 @@ func ServicesUp() error {
 
 // ServicesDown stops all services
 func ServicesDown() error {
-	cfg, err := config.Load()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
 	}
@@ -54,7 +65,12 @@ func ServicesDown() error {
 
 // ServicesPs lists running services
 func ServicesPs() error {
-	cfg, err := config.Load()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
 	}
@@ -68,7 +84,12 @@ func ServicesPs() error {
 
 // ServicesLogs shows service logs
 func ServicesLogs(follow bool) error {
-	cfg, err := config.Load()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
 	}
@@ -82,7 +103,12 @@ func ServicesLogs(follow bool) error {
 
 // ServicesRestart restarts services
 func ServicesRestart() error {
-	cfg, err := config.Load()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
 	}

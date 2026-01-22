@@ -1,34 +1,26 @@
 package config
 
-// Config represents the main configuration structure
+// GlobalConfig represents global configuration (environment variables only)
+// Location: ~/.rize/config.yml
+type GlobalConfig struct {
+	Environment map[string]string `yaml:"environment"`
+}
+
+// ProjectConfig represents per-project configuration
+// Location: ~/.rize/projects/{name}-{hash}/config.yml
+type ProjectConfig struct {
+	Services    map[string]bool   `yaml:"services"`    // Service name -> enabled/disabled
+	Environment map[string]string `yaml:"environment"` // Overrides global environment
+}
+
+// Config represents the merged configuration (global + project)
 type Config struct {
-	Services    map[string]Service    `yaml:"services"`
-	Environment map[string]string     `yaml:"environment"`
-	Network     NetworkConfig         `yaml:"network"`
-	Volumes     []string              `yaml:"volumes"`
-}
-
-// Service represents a docker compose service
-type Service struct {
-	Enabled     bool              `yaml:"enabled"`
-	Image       string            `yaml:"image"`
-	Ports       []string          `yaml:"ports,omitempty"`
-	Command     []string          `yaml:"command,omitempty"`
-	Environment map[string]string `yaml:"environment,omitempty"`
-	Volumes     []string          `yaml:"volumes,omitempty"`
-	HealthCheck *HealthCheck      `yaml:"healthcheck,omitempty"`
-}
-
-// HealthCheck represents a service health check
-type HealthCheck struct {
-	Test     []string `yaml:"test"`
-	Interval string   `yaml:"interval"`
-	Timeout  string   `yaml:"timeout"`
-	Retries  int      `yaml:"retries"`
+	Services    map[string]bool   // Merged service toggles
+	Environment map[string]string // Merged environment (project overrides global)
 }
 
 // NetworkConfig represents network configuration
 type NetworkConfig struct {
-	Name   string `yaml:"name"`
-	Driver string `yaml:"driver"`
+	Name   string
+	Driver string
 }

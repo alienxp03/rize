@@ -45,6 +45,80 @@ type ComposeVolume struct {
 	Driver string `yaml:"driver,omitempty"`
 }
 
+// hardcodedServiceDefinitions returns all available service definitions
+func hardcodedServiceDefinitions() map[string]ComposeService {
+	networkName := config.DefaultNetworkConfig().Name
+
+	return map[string]ComposeService{
+		"playwright": {
+			Image: "mcr.microsoft.com/playwright:v1.40.0",
+			Ports: []string{"8381:3000"},
+			Environment: map[string]string{
+				"PLAYWRIGHT_BROWSERS_PATH": "/ms-playwright",
+			},
+			Networks: []string{networkName},
+		},
+		"postgres": {
+			Image: "postgres:16-alpine",
+			Environment: map[string]string{
+				"POSTGRES_PASSWORD": "dev",
+				"POSTGRES_USER":     "dev",
+				"POSTGRES_DB":       "dev",
+			},
+			Volumes:  []string{"rize-postgres:/var/lib/postgresql/data"},
+			Networks: []string{networkName},
+			HealthCheck: &ComposeHealthCheck{
+				Test:     []string{"CMD-SHELL", "pg_isready -U dev"},
+				Interval: "5s",
+				Timeout:  "5s",
+				Retries:  5,
+			},
+		},
+		"redis": {
+			Image:    "redis:7-alpine",
+			Volumes:  []string{"rize-redis:/data"},
+			Networks: []string{networkName},
+			HealthCheck: &ComposeHealthCheck{
+				Test:     []string{"CMD", "redis-cli", "ping"},
+				Interval: "5s",
+				Timeout:  "3s",
+				Retries:  5,
+			},
+		},
+		"mitmproxy": {
+			Image:    "mitmproxy/mitmproxy:latest",
+			Ports:    []string{"8080:8080", "8081:8081"},
+			Volumes:  []string{"rize-mitmproxy:/home/mitmproxy/.mitmproxy"},
+			Networks: []string{networkName},
+			Command: []string{
+				"/bin/sh",
+				"-c",
+				`cat > /tmp/rize-noauth.py <<'PY'
+from mitmproxy import ctx
+
+class DisableWebAuth:
+    def running(self):
+        app = getattr(ctx.master, "app", None)
+        if app:
+            app.settings["is_valid_password"] = lambda _password: True
+
+addons = [DisableWebAuth()]
+PY
+exec mitmweb --web-host 0.0.0.0 --set block_global=false --set web_password= --set web_open_browser=false -s /tmp/rize-noauth.py`,
+			},
+		},
+	}
+}
+
+// hardcodedVolumes returns all volumes used by services
+func hardcodedVolumes() []string {
+	return []string{
+		"rize-postgres",
+		"rize-redis",
+		"rize-mitmproxy",
+	}
+}
+
 // GenerateComposeFile generates a docker-compose.yml from config
 func GenerateComposeFile(cfg *config.Config) (*ComposeFile, error) {
 	compose := &ComposeFile{
@@ -54,40 +128,28 @@ func GenerateComposeFile(cfg *config.Config) (*ComposeFile, error) {
 	}
 
 	// Add network
-	compose.Networks[cfg.Network.Name] = ComposeNetwork{
-		Name:   cfg.Network.Name,
-		Driver: cfg.Network.Driver,
+	networkCfg := config.DefaultNetworkConfig()
+	compose.Networks[networkCfg.Name] = ComposeNetwork{
+		Name:   networkCfg.Name,
+		Driver: networkCfg.Driver,
 	}
 
-	// Add services
-	for name, svc := range cfg.Services {
-		if !svc.Enabled {
+	// Get all service definitions
+	allServices := hardcodedServiceDefinitions()
+
+	// Add only enabled services from config
+	for name, enabled := range cfg.Services {
+		if !enabled {
 			continue
 		}
 
-		composeSvc := ComposeService{
-			Image:       svc.Image,
-			Command:     svc.Command,
-			Ports:       svc.Ports,
-			Environment: svc.Environment,
-			Volumes:     svc.Volumes,
-			Networks:    []string{cfg.Network.Name},
+		if svc, exists := allServices[name]; exists {
+			compose.Services[name] = svc
 		}
-
-		if svc.HealthCheck != nil {
-			composeSvc.HealthCheck = &ComposeHealthCheck{
-				Test:     svc.HealthCheck.Test,
-				Interval: svc.HealthCheck.Interval,
-				Timeout:  svc.HealthCheck.Timeout,
-				Retries:  svc.HealthCheck.Retries,
-			}
-		}
-
-		compose.Services[name] = composeSvc
 	}
 
 	// Add volumes
-	for _, vol := range cfg.Volumes {
+	for _, vol := range hardcodedVolumes() {
 		compose.Volumes[vol] = ComposeVolume{}
 	}
 

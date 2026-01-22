@@ -100,7 +100,8 @@ func (c *Client) RunContainer(cfg *config.Config, cmd []string, interactive bool
 	}
 
 	// Ensure network exists
-	if err := c.ensureNetwork(cfg.Network); err != nil {
+	networkCfg := config.DefaultNetworkConfig()
+	if err := c.ensureNetwork(networkCfg); err != nil {
 		return err
 	}
 
@@ -198,24 +199,24 @@ func (c *Client) buildContainerConfigs(cfg *config.Config) (string, string, *con
 	}
 
 	// Add service URLs for enabled services
-	for name, svc := range cfg.Services {
-		if svc.Enabled {
-			switch name {
-			case "postgres":
-				user := svc.Environment["POSTGRES_USER"]
-				password := svc.Environment["POSTGRES_PASSWORD"]
-				db := svc.Environment["POSTGRES_DB"]
-				env = append(env, fmt.Sprintf("DATABASE_URL=postgresql://%s:%s@%s:5432/%s", user, password, name, db))
-			case "redis":
-				env = append(env, fmt.Sprintf("REDIS_URL=redis://%s:6379", name))
-			case "playwright":
-				env = append(env, fmt.Sprintf("PLAYWRIGHT_URL=http://%s:3000", name))
-			case "mitmproxy":
-				if c.isComposeServiceRunning(cfg.Network.Name, name) {
-					env = append(env, fmt.Sprintf("HTTP_PROXY=http://%s:8080", name))
-					env = append(env, fmt.Sprintf("HTTPS_PROXY=http://%s:8080", name))
-					env = append(env, "NO_PROXY=localhost,127.0.0.1")
-				}
+	networkName := config.DefaultNetworkConfig().Name
+	for name, enabled := range cfg.Services {
+		if !enabled {
+			continue
+		}
+
+		switch name {
+		case "postgres":
+			env = append(env, fmt.Sprintf("DATABASE_URL=postgresql://dev:dev@%s:5432/dev", name))
+		case "redis":
+			env = append(env, fmt.Sprintf("REDIS_URL=redis://%s:6379", name))
+		case "playwright":
+			env = append(env, fmt.Sprintf("PLAYWRIGHT_URL=http://%s:3000", name))
+		case "mitmproxy":
+			if c.isComposeServiceRunning(networkName, name) {
+				env = append(env, fmt.Sprintf("HTTP_PROXY=http://%s:8080", name))
+				env = append(env, fmt.Sprintf("HTTPS_PROXY=http://%s:8080", name))
+				env = append(env, "NO_PROXY=localhost,127.0.0.1")
 			}
 		}
 	}
@@ -285,15 +286,17 @@ func (c *Client) buildContainerConfigs(cfg *config.Config) (string, string, *con
 		}
 	}
 
-	// Per-project state volume (includes zsh history, etc.)
-	// Use a volume instead of bind mount to isolate state between projects
-	projectHash := shortHash(absPath)
-	stateVolumeName := fmt.Sprintf("rize-state-%s", projectHash)
-	mounts = append(mounts, mount.Mount{
-		Type:   mount.TypeVolume,
-		Source: stateVolumeName,
-		Target: filepath.Join(ContainerHome, ".local/share/rize"),
-	})
+	// Per-project state directory (includes zsh history, etc.)
+	// Bind mount per-project state for isolation
+	stateDir, err := config.ProjectStateDir(absPath)
+	if err == nil {
+		os.MkdirAll(stateDir, 0755)
+		mounts = append(mounts, mount.Mount{
+			Type:   mount.TypeBind,
+			Source: stateDir,
+			Target: filepath.Join(ContainerHome, ".local/share/rize"),
+		})
+	}
 
 	// Docker socket
 	if runtime.GOOS != "windows" {
@@ -336,7 +339,7 @@ func (c *Client) buildContainerConfigs(cfg *config.Config) (string, string, *con
 	hostConfig := &container.HostConfig{
 		Mounts:      mounts,
 		AutoRemove:  false,
-		NetworkMode: container.NetworkMode(cfg.Network.Name),
+		NetworkMode: container.NetworkMode(networkName),
 	}
 
 	// Network config
@@ -431,8 +434,8 @@ func (c *Client) ensureConnectedToServiceNetworks(containerID string, cfg *confi
 		attachedNetworks[name] = struct{}{}
 	}
 
-	for name, svc := range cfg.Services {
-		if !svc.Enabled {
+	for name, enabled := range cfg.Services {
+		if !enabled {
 			continue
 		}
 
@@ -473,11 +476,12 @@ func (c *Client) findComposeServiceContainerID(serviceName string) string {
 
 func (c *Client) buildExecEnv(cfg *config.Config) []string {
 	var env []string
-	for name, svc := range cfg.Services {
-		if !svc.Enabled {
+	networkName := config.DefaultNetworkConfig().Name
+	for name, enabled := range cfg.Services {
+		if !enabled {
 			continue
 		}
-		if name == "mitmproxy" && c.isComposeServiceRunning(cfg.Network.Name, name) {
+		if name == "mitmproxy" && c.isComposeServiceRunning(networkName, name) {
 			env = append(env, fmt.Sprintf("HTTP_PROXY=http://%s:8080", name))
 			env = append(env, fmt.Sprintf("HTTPS_PROXY=http://%s:8080", name))
 			env = append(env, fmt.Sprintf("http_proxy=http://%s:8080", name))

@@ -48,7 +48,9 @@ func Help() {
 	fmt.Println("  RIZE_IMAGE         Docker image to use (default: alienxp03/rize:latest)")
 	fmt.Println()
 
-	fmt.Println("Config File:")
-	fmt.Println("  ~/.config/rize/config.yml")
+	fmt.Println("Config Files:")
+	fmt.Println("  ~/.rize/config.yml                        Global environment variables")
+	fmt.Println("  ~/.rize/projects/{name}/config.yml        Per-project config (services + env)")
+	fmt.Println("  ~/.config/rize/docker-compose.yml         Shared services")
 	fmt.Println()
 }

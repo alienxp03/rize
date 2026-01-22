@@ -10,25 +10,47 @@ import (
 
 // Init initializes the rize configuration
 func Init() error {
-	configPath, err := config.ConfigPath()
+	// Initialize global config
+	globalPath, err := config.GlobalConfigPath()
 	if err != nil {
 		return err
 	}
 
-	// Check if config already exists
-	if _, err := os.Stat(configPath); err == nil {
-		ui.Warning("Config file already exists at %s", configPath)
-		return nil
+	// Check if global config already exists
+	if _, err := os.Stat(globalPath); err == nil {
+		ui.Warning("Global config file already exists at %s", globalPath)
+	} else {
+		ui.Info("Creating global config file at %s", globalPath)
+		cfg := config.DefaultGlobalConfig()
+		if err := config.SaveGlobal(cfg); err != nil {
+			return fmt.Errorf("failed to save global config: %w", err)
+		}
+		ui.Success("Global config file created successfully")
 	}
 
-	ui.Info("Creating config file at %s", configPath)
-
-	cfg := config.DefaultConfig()
-	if err := config.Save(cfg); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
+	// Initialize per-project config
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
 	}
 
-	ui.Success("Config file created successfully")
-	ui.Info("Edit the config file to customize your environment")
+	projectPath, err := config.ProjectConfigPath(cwd)
+	if err != nil {
+		return err
+	}
+
+	// Check if project config already exists
+	if _, err := os.Stat(projectPath); err == nil {
+		ui.Warning("Project config file already exists at %s", projectPath)
+	} else {
+		ui.Info("Creating project config file at %s", projectPath)
+		cfg := config.DefaultProjectConfig()
+		if err := config.SaveProject(cfg, cwd); err != nil {
+			return fmt.Errorf("failed to save project config: %w", err)
+		}
+		ui.Success("Project config file created successfully")
+	}
+
+	ui.Info("Edit the config files to customize your environment")
 	return nil
 }

@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"os"
+
 	"github.com/alienxp03/rize/internal/config"
 	"github.com/alienxp03/rize/internal/docker"
 	"github.com/alienxp03/rize/internal/ui"
@@ -8,7 +10,12 @@ import (
 
 // Exec runs a command in the container
 func Exec(args []string) error {
-	cfg, err := config.Load()
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(cwd)
 	if err != nil {
 		return err
 	}
